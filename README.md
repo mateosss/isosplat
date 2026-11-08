@@ -34,6 +34,13 @@ npm run dev       # http://localhost:5173
 npm run build     # typecheck + production build in dist/
 ```
 
+### Deploying to GitHub Pages
+
+`.github/workflows/pages.yml` builds the app on every push to `main` and publishes it with
+GitHub Pages (the build is uploaded as a Pages artifact, so `dist/` is never committed).
+One-time setup: in the repository settings, **Pages → Source: GitHub Actions**.
+The site is fully static and uses relative asset paths, so it works at `https://<user>.github.io/<repo>/`.
+
 Built with [three.js](https://threejs.org) and [Spark](https://sparkjs.dev) (3DGS renderer).
 Cut-planes are implemented as a global Spark `SplatEdit` (one PLANE SDF per enabled cut-plane,
 opacity 0) for gaussians, and as three.js clipping planes for the point-cloud render.
