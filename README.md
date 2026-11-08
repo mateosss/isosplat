@@ -64,8 +64,21 @@ opacity 0) for gaussians, and as three.js clipping planes for the point-cloud re
 | 2 / 4 / 6 / 8 | orbit 15° down / left / right / up; with Ctrl: pan |
 | 9 / 5 / 0 | opposite side / persp↔ortho / look from (selected or first) camera |
 | Numpad + / − | zoom in / out |
+| Ctrl+S / Ctrl+Shift+S / Ctrl+O | save project / save as / open project |
 | Number fields | click to type, drag horizontally to scrub (Shift fine, Ctrl snap, Esc restore) |
 | WASD button | fly mode: WASD move, mouse look, Q/E down/up, Shift faster, wheel = base speed, Esc exits |
+
+## Projects, rendering and world
+
+- **Projects** (`.isosplat`) are self-contained: a small header, a JSON description of the scene
+  (elements, transforms, camera/cut-plane settings, world, view) and the original splat files
+  embedded byte-for-byte. In Chrome/Edge, Save writes back to the opened file; elsewhere it downloads.
+  Drop a `.isosplat` file on the window to open it.
+- **Render PNG** (toolbar, camera properties, or World properties) renders a clean image without
+  overlays, splats sorted for the render camera, with 2× supersampling. From a camera it uses the
+  camera's resolution; from the free view it uses the viewport's pixel size.
+- **World** (top of the hierarchy): background color, and an option to render PNGs with a
+  transparent background.
 
 View keys work on the numpad and on the top-row digits. Browsers often reserve Ctrl+1…8 for
 switching tabs, which is why Shift also selects the opposite view.

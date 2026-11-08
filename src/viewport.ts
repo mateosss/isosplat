@@ -5,6 +5,15 @@ import { Editor } from "./editor";
 import { AXIS_COLORS, CameraElement, SceneElement, SplatElement } from "./elements";
 
 const UP = new THREE.Vector3(0, 0, 1);
+
+export interface ViewState {
+  projection: "persp" | "ortho";
+  position: number[];
+  target: number[];
+  fov: number;
+  orthoHeight: number;
+  zoom: number;
+}
 /** Distance at which the free orthographic camera sits from its orbit target. */
 const ORTHO_DISTANCE = 200;
 const PICK_PIXELS = 6;
@@ -117,6 +126,38 @@ export class Viewport {
     this.helpers.visible = v;
     this.container.classList.toggle("overlays-off", !v);
     if (!v) this.constraintLine.visible = false;
+  }
+
+  setBackground(color: string) {
+    this.renderer.setClearColor(color);
+    this.container.style.background = color;
+  }
+
+  /** Serializable free-view state (camera-view locks are not saved). */
+  getViewState(): ViewState {
+    return {
+      projection: this.isOrtho ? "ortho" : "persp",
+      position: this.activeCam.position.toArray(),
+      target: this.controls.target.toArray(),
+      fov: this.perspCam.fov,
+      orthoHeight: this.orthoHeight,
+      zoom: this.orthoCam.zoom,
+    };
+  }
+
+  setViewState(v: ViewState) {
+    this.unlock();
+    this.anim = null;
+    this.perspCam.fov = v.fov;
+    this.perspCam.updateProjectionMatrix();
+    this.orthoHeight = v.orthoHeight;
+    this.orthoCam.zoom = v.zoom;
+    this.updateOrthoFrustum();
+    this.setActive(v.projection === "ortho" ? this.orthoCam : this.perspCam);
+    this.activeCam.position.fromArray(v.position);
+    this.controls.target.fromArray(v.target);
+    this.controls.update();
+    this.onViewChanged();
   }
 
   // ---------------------------------------------------------------- sizing

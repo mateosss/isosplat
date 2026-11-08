@@ -10,14 +10,20 @@ export class Editor {
   readonly scene = new THREE.Scene();
   readonly elements: SceneElement[] = [];
   selected: SceneElement | null = null;
+  /** The "World" row of the hierarchy is selected (selected is then null). */
+  worldSelected = false;
   overlaysVisible = true;
+  readonly world = {
+    background: "#3a3a3a",
+    /** Render PNGs with a transparent background instead of the world color. */
+    transparentRender: false,
+  };
 
   /** Clipping planes shared by all point-cloud materials (mutated in place). */
   readonly clipPlanes: THREE.Plane[] = [];
   /** One global Spark edit; its SDFs are the enabled cut-planes. Applies to every SplatMesh. */
   private cutEdit = new SplatEdit({ rgbaBlendMode: SplatEditRgbaBlendMode.MULTIPLY, sdfs: [] });
   private listeners = new Map<EventName, Set<Listener>>();
-  private counters = new Map<string, number>();
 
   constructor() {
     this.scene.add(this.cutEdit);
@@ -32,10 +38,14 @@ export class Editor {
     this.listeners.get(event)?.forEach((fn) => fn());
   }
 
+  /** Blender-style unique names: Camera, Camera.001, Camera.002… */
   uniqueName(base: string) {
-    const n = (this.counters.get(base) ?? 0) + 1;
-    this.counters.set(base, n);
-    return n === 1 ? base : `${base}.${String(n - 1).padStart(3, "0")}`;
+    const used = new Set(this.elements.map((e) => e.name));
+    if (!used.has(base)) return base;
+    for (let n = 1; ; n++) {
+      const name = `${base}.${String(n).padStart(3, "0")}`;
+      if (!used.has(name)) return name;
+    }
   }
 
   add<T extends SceneElement>(el: T): T {
@@ -56,11 +66,28 @@ export class Editor {
   }
 
   select(el: SceneElement | null) {
-    if (this.selected === el) return;
+    if (this.selected === el && !this.worldSelected) return;
+    this.worldSelected = false;
     this.selected?.setSelected(false);
     this.selected = el;
     el?.setSelected(true);
     this.emit("selection");
+  }
+
+  selectWorld() {
+    this.select(null);
+    this.worldSelected = true;
+    this.emit("selection");
+  }
+
+  /** Remove every element (used before loading a project). */
+  clear() {
+    this.select(null);
+    for (const el of [...this.elements]) {
+      el.dispose();
+    }
+    this.elements.length = 0;
+    this.emit("elements");
   }
 
   setOverlaysVisible(v: boolean) {
@@ -79,9 +106,15 @@ export class Editor {
   }
 
   async importSplat(file: File) {
-    const bytes = await file.arrayBuffer();
-    const name = file.name.replace(/\.[^.]+$/, "");
-    const el = new SplatElement(name, bytes, file.name, this.clipPlanes, () => this.emit("elements"));
+    return this.importSplatBlob(file, file.name);
+  }
+
+  /** Load a splat from a Blob (a File, or a slice of a project file). `setup` runs before loading finishes. */
+  async importSplatBlob(source: Blob, fileName: string, setup?: (el: SplatElement) => void) {
+    const bytes = await source.arrayBuffer();
+    const name = this.uniqueName(fileName.replace(/\.[^.]+$/, ""));
+    const el = new SplatElement(name, bytes, fileName, source, this.clipPlanes, () => this.emit("elements"));
+    setup?.(el);
     this.add(el);
     try {
       await el.ready;

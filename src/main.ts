@@ -9,6 +9,9 @@ import { HierarchyPanel } from "./ui/hierarchy";
 import { PropertiesPanel } from "./ui/properties";
 import { toast } from "./ui/toast";
 import { CameraElement } from "./elements";
+import { renderPng } from "./render";
+import { PROJECT_EXTENSION, applyProject, buildProject, rebindSources } from "./project";
+import { isAbort, openFile, saveBlob } from "./ui/files";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -21,6 +24,7 @@ const fly = new FlyMode(vp, hud);
 const gizmo = new AxisGizmo($<HTMLCanvasElement>("axis-gizmo"), (dir) => vp.snapView(dir));
 new HierarchyPanel($("hierarchy-list"), editor);
 const props = new PropertiesPanel($("properties-body"), editor, vp);
+vp.setBackground(editor.world.background);
 
 // ------------------------------------------------------------------ initial scene
 
@@ -123,6 +127,99 @@ async function importFiles(files: File[]) {
   }
 }
 
+// ------------------------------------------------------------------ project files & rendering
+
+const PROJECT_TYPE = { description: "IsoSplat project", accept: { "application/octet-stream": [PROJECT_EXTENSION] } };
+const PNG_TYPE = { description: "PNG image", accept: { "image/png": [".png"] } };
+let projectHandle: FileSystemFileHandle | null = null;
+let projectName = "untitled";
+
+function setProjectName(name: string) {
+  projectName = name.replace(/\.isosplat$/i, "");
+  $("project-name").textContent = projectName;
+  document.title = `${projectName} — IsoSplat`;
+}
+setProjectName("untitled");
+
+async function saveProject(saveAs: boolean) {
+  const loading = editor.splats().filter((s) => !s.loaded);
+  if (loading.length) return toast("Wait for splats to finish loading before saving");
+  try {
+    const { blob } = buildProject(editor, vp.getViewState());
+    toast("Saving…", 10000);
+    const handle = await saveBlob(blob, `${projectName}${PROJECT_EXTENSION}`, PROJECT_TYPE, saveAs ? null : projectHandle);
+    if (handle) {
+      projectHandle = handle;
+      setProjectName(handle.name);
+      // Splat sources may be slices of the file we just overwrote: point them at the new one.
+      await rebindSources(editor, await handle.getFile());
+    }
+    toast(`Saved ${projectName}${PROJECT_EXTENSION} (${formatBytes(blob.size)})`);
+  } catch (err) {
+    if (isAbort(err)) return toast("Save cancelled");
+    console.error(err);
+    toast(`Save failed: ${(err as Error).message}`, 5000);
+  }
+}
+
+async function openProject(file: File, handle: FileSystemFileHandle | null) {
+  try {
+    toast(`Opening ${file.name}…`, 10000);
+    const { json, loaded } = await applyProject(editor, file);
+    vp.setBackground(editor.world.background);
+    setOverlays(json.overlays);
+    vp.setViewState(json.view);
+    projectHandle = handle;
+    setProjectName(file.name);
+    await loaded;
+    toast(`Opened ${file.name}`);
+  } catch (err) {
+    console.error(err);
+    toast(`Could not open ${file.name}: ${(err as Error).message}`, 5000);
+  }
+}
+
+async function promptOpenProject() {
+  try {
+    const picked = await openFile(PROJECT_TYPE, $<HTMLInputElement>("project-input"));
+    if (picked) await openProject(picked.file, picked.handle);
+  } catch (err) {
+    toast(`Open failed: ${(err as Error).message}`, 5000);
+  }
+}
+
+let rendering = false;
+async function renderAndSave(cam: CameraElement | null) {
+  if (rendering) return;
+  rendering = true;
+  try {
+    const source = cam ?? vp.lockedCamera;
+    toast("Rendering…", 30000);
+    const { blob, width, height } = await renderPng(vp, editor, source);
+    const base = `${projectName}-${source ? source.name : "view"}`.replace(/[^\w.-]+/g, "_");
+    await saveBlob(blob, `${base}.png`, PNG_TYPE);
+    toast(`Rendered ${width}×${height} PNG`);
+  } catch (err) {
+    if (isAbort(err)) return toast("Render not saved");
+    console.error(err);
+    toast(`Render failed: ${(err as Error).message}`, 5000);
+  } finally {
+    rendering = false;
+  }
+}
+props.onRender = (cam) => renderAndSave(cam);
+
+function formatBytes(n: number) {
+  if (n > 1e9) return `${(n / 1e9).toFixed(2)} GB`;
+  if (n > 1e6) return `${(n / 1e6).toFixed(1)} MB`;
+  return `${(n / 1e3).toFixed(0)} kB`;
+}
+
+$("btn-open").addEventListener("click", promptOpenProject);
+$("btn-save").addEventListener("click", () => saveProject(false));
+$("btn-save-as").addEventListener("click", () => saveProject(true));
+$("btn-render").addEventListener("click", () => renderAndSave(null));
+
 // Drag & drop
 const dropHint = $("drop-hint");
 window.addEventListener("dragover", (e) => {
@@ -135,7 +232,10 @@ window.addEventListener("dragleave", (e) => {
 window.addEventListener("drop", (e) => {
   e.preventDefault();
   dropHint.classList.add("hidden");
-  importFiles(Array.from(e.dataTransfer?.files ?? []));
+  const files = Array.from(e.dataTransfer?.files ?? []);
+  const project = files.find((f) => f.name.toLowerCase().endsWith(PROJECT_EXTENSION));
+  if (project) openProject(project, null);
+  else importFiles(files);
 });
 
 // ------------------------------------------------------------------ pointer
@@ -194,6 +294,17 @@ window.addEventListener("keydown", (e) => {
   if (fly.onKey(e, true)) return e.preventDefault();
   if (isTyping(e.target)) return;
   if (transform.onKey(e)) return e.preventDefault();
+  if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+    const k = e.key.toLowerCase();
+    if (k === "s") {
+      e.preventDefault();
+      return void saveProject(e.shiftKey);
+    }
+    if (k === "o") {
+      e.preventDefault();
+      return void promptOpenProject();
+    }
+  }
   if (e.metaKey || e.altKey) return;
 
   // Blender numpad navigation. The top-row digits do the same for keyboards without a numpad.

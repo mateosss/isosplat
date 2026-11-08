@@ -28,6 +28,22 @@ export class HierarchyPanel {
 
   render() {
     this.list.replaceChildren();
+    const world = document.createElement("div");
+    world.className = "h-item world";
+    world.classList.toggle("selected", this.editor.worldSelected);
+    const badge = document.createElement("span");
+    badge.className = "badge world";
+    badge.textContent = "WORLD";
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = "World";
+    const swatch = document.createElement("span");
+    swatch.className = "meta";
+    swatch.textContent = "■";
+    swatch.style.color = this.editor.world.background;
+    world.append(badge, name, swatch);
+    world.addEventListener("click", () => this.editor.selectWorld());
+    this.list.append(world);
     for (const g of GROUPS) {
       const items = this.editor.elements.filter((e) => e.kind === g.kind);
       const header = document.createElement("div");

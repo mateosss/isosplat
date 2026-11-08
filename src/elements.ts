@@ -224,7 +224,16 @@ export class SplatElement extends SceneElement {
     new THREE.LineBasicMaterial({ color: SELECT_COLOR }),
   );
 
-  constructor(name: string, bytes: ArrayBuffer, fileName: string, private clipPlanes: THREE.Plane[], onProgress?: () => void) {
+  constructor(
+    name: string,
+    bytes: ArrayBuffer,
+    /** Original file name (its extension tells Spark the format). */
+    readonly fileName: string,
+    /** The original file bytes (disk-backed Blob), embedded when saving a project. */
+    public source: Blob,
+    private clipPlanes: THREE.Plane[],
+    onProgress?: () => void,
+  ) {
     super(name);
     this.mesh = new SplatMesh({
       fileBytes: bytes,

@@ -257,3 +257,12 @@ button:disabled { opacity: 0.4; cursor: default; }
 .p-row input[type="number"]::-webkit-inner-spin-button,
 .p-row input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .p-row .field.scrubbing input { outline: 1px solid var(--accent); background: #2b2219; }
+
+.title-row { display: flex; align-items: center; gap: 8px; }
+.title-row #project-name { color: var(--text); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.title-row .project-actions { margin: 0 0 0 auto; flex-wrap: nowrap; }
+.h-item.world { padding-left: 10px; }
+.badge.world { background: #4a4a4a; }
+.p-row input[type="color"] { width: 48px; height: 24px; padding: 0 2px; background: #1f1f1f; border: 1px solid var(--border); border-radius: 3px; }
+.swatches { display: flex; gap: 4px; flex-wrap: wrap; }
+.swatches button { width: 20px; height: 20px; padding: 0; border-radius: 3px; }

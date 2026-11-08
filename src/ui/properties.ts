@@ -9,6 +9,9 @@ type Binding = { sync: () => void };
 export class PropertiesPanel {
   private bindings: Binding[] = [];
 
+  /** Called by "Render PNG" buttons; set by main. */
+  onRender: (cam: CameraElement | null) => void = () => {};
+
   constructor(private body: HTMLElement, private editor: Editor, private vp: Viewport) {
     editor.on("selection", () => this.render());
     editor.on("elements", () => {
@@ -25,6 +28,7 @@ export class PropertiesPanel {
     this.bindings = [];
     this.body.replaceChildren();
     const el = this.editor.selected;
+    if (this.editor.worldSelected) return this.worldSection();
     if (!el) {
       const p = document.createElement("div");
       p.className = "p-empty";
@@ -134,9 +138,41 @@ export class PropertiesPanel {
         this.vp.copyViewToCamera(cam);
         this.render();
       }),
+      this.button("📷 Render PNG", () => this.onRender(cam)),
     );
     s.append(buttons);
     s.append(this.note("Camera looks along its local −Z axis with +Y up (three.js convention)."));
+  }
+
+  private worldSection() {
+    const s = this.section("World");
+    const w = this.editor.world;
+    const apply = (c: string) => {
+      w.background = c;
+      this.vp.setBackground(c);
+      this.editor.emit("props");
+    };
+    const color = document.createElement("input");
+    color.type = "color";
+    color.value = w.background;
+    color.addEventListener("input", () => apply(color.value));
+    this.bindings.push({ sync: () => void (color.value !== w.background && (color.value = w.background)) });
+    const swatches = document.createElement("div");
+    swatches.className = "swatches";
+    for (const c of ["#3a3a3a", "#1d1d1d", "#000000", "#ffffff", "#e8e4dc", "#c9d6e3", "#2b3a4a"]) {
+      const b = document.createElement("button");
+      b.style.background = c;
+      b.title = c;
+      b.addEventListener("click", () => apply(c));
+      swatches.append(b);
+    }
+    s.append(this.row("Background", color, swatches));
+    s.append(this.row("Transparent PNG", this.checkbox(() => w.transparentRender, (v) => (w.transparentRender = v))));
+    s.append(this.note("When enabled, rendered PNGs get a transparent background instead of the world color."));
+    const buttons = document.createElement("div");
+    buttons.className = "p-buttons";
+    buttons.append(this.button("📷 Render PNG of view", () => this.onRender(null)));
+    s.append(buttons);
   }
 
   private splatSection(sp: SplatElement) {
