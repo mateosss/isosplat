@@ -173,6 +173,22 @@ export class PropertiesPanel {
     buttons.className = "p-buttons";
     buttons.append(this.button("📷 Render PNG of view", () => this.onRender(null)));
     s.append(buttons);
+
+    const d = this.section("Depth view");
+    d.append(this.row("Depth view", this.checkbox(() => w.depthView, (v) => {
+      w.depthView = v;
+      this.editor.emit("props");
+    })));
+    d.append(this.row("Auto range", this.checkbox(() => w.depthAuto, (v) => (w.depthAuto = v))));
+    // Editing the range switches to manual.
+    d.append(this.row("Range (m)",
+      this.number(() => w.depthMin, (v) => { w.depthAuto = false; w.depthMin = Math.max(0, v); }, { tag: "min", step: 0.1 }),
+      this.number(() => w.depthMax, (v) => { w.depthAuto = false; w.depthMax = Math.max(w.depthMin + 0.01, v); }, { tag: "max", step: 0.1 }),
+    ));
+    d.append(this.note(
+      "Colors gaussians and point clouds by their distance along the camera's view axis (jet colormap: blue = near, red = far). " +
+      "Auto fits the range to the visible scene, clipped by the cut-planes. Toggle with Z or the ◐ Depth button.",
+    ));
   }
 
   private splatSection(sp: SplatElement) {
@@ -278,7 +294,7 @@ export class PropertiesPanel {
     input.step = String(step);
     if (opts.tag) {
       wrap.classList.add("has-tag");
-      if (opts.tag.length > 1) wrap.classList.add("wide-tag");
+      if (opts.tag.length > 1) wrap.classList.add(opts.tag.length > 2 ? "wider-tag" : "wide-tag");
       const tag = document.createElement("span");
       tag.textContent = opts.tag.toUpperCase();
       tag.className = `ax-${opts.tag}`;

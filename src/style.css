@@ -266,3 +266,21 @@ button:disabled { opacity: 0.4; cursor: default; }
 .p-row input[type="color"] { width: 48px; height: 24px; padding: 0 2px; background: #1f1f1f; border: 1px solid var(--border); border-radius: 3px; }
 .swatches { display: flex; gap: 4px; flex-wrap: wrap; }
 .swatches button { width: 20px; height: 20px; padding: 0; border-radius: 3px; }
+
+#depth-legend {
+  position: absolute;
+  right: 8px;
+  bottom: 46px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: rgba(20, 20, 20, 0.8);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: ui-monospace, "Fira Code", monospace;
+  pointer-events: none;
+}
+#depth-legend-bar { width: 160px; height: 10px; border-radius: 2px; }
+.p-row .field.wider-tag input { padding-left: 30px; }

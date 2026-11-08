@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { SplatEditSdf, SplatEditSdfType, SplatMesh } from "@sparkjsdev/spark";
+import { addPointDepthView, setSplatDepthView } from "./depth";
 
 export const SELECT_COLOR = new THREE.Color(0xff8c1a);
 export const AXIS_COLORS = [new THREE.Color(0xff3352), new THREE.Color(0x8bdc00), new THREE.Color(0x2890ff)];
@@ -215,6 +216,8 @@ export class SplatElement extends SceneElement {
   loaded = false;
   loadProgress = 0;
   numSplats = 0;
+  /** Gaussians currently colored by depth (see depth.ts). */
+  depthView = false;
   /** Robust (1st–99th percentile) local bounding box of the splat centers. */
   readonly bounds = new THREE.Box3(new THREE.Vector3(-1, -1, -1), new THREE.Vector3(1, 1, 1));
 
@@ -301,6 +304,11 @@ export class SplatElement extends SceneElement {
     if (this.points) (this.points.material as THREE.PointsMaterial).size = size;
   }
 
+  setDepthView(on: boolean) {
+    this.depthView = on;
+    setSplatDepthView(this.mesh, on);
+  }
+
   setVisible(visible: boolean) {
     this.visible = visible;
     this.updateVisibility();
@@ -334,6 +342,7 @@ export class SplatElement extends SceneElement {
       vertexColors: true,
       clippingPlanes: this.clipPlanes, // shared array, updated every frame by the editor
     });
+    addPointDepthView(mat);
     this.points = new THREE.Points(geom, mat);
     this.points.raycast = () => {}; // picking goes through the splat mesh
     this.root.add(this.points);

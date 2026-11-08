@@ -17,6 +17,12 @@ export class Editor {
     background: "#3a3a3a",
     /** Render PNGs with a transparent background instead of the world color. */
     transparentRender: false,
+    /** Color gaussians and points by view depth (jet colormap) instead of their colors. */
+    depthView: false,
+    /** Fit the depth range to the visible scene every frame; otherwise use depthMin/depthMax. */
+    depthAuto: true,
+    depthMin: 0.5,
+    depthMax: 20,
   };
 
   /** Clipping planes shared by all point-cloud materials (mutated in place). */

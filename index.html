@@ -19,10 +19,16 @@
           <button id="btn-iso" title="Orthographic isometric view">Iso</button>
           <button id="btn-frame" title="Frame selected (Numpad . / Period)">Frame</button>
           <button id="btn-orbit-center" title="Set the orbit center to the surface at the viewport center (F: at the mouse cursor)">⊕ Orbit center</button>
+          <button id="btn-depth" title="Depth view: color by distance to the camera, jet colormap (Z)">◐ Depth</button>
           <button id="btn-render" title="Render a clean PNG of the current view (from the camera's resolution when looking through a camera)">📷 Render PNG</button>
         </div>
         <canvas id="axis-gizmo" class="overlay-ui" title="Click an axis to align the view"></canvas>
         <div id="hud" class="hidden"></div>
+        <div id="depth-legend" class="overlay-ui hidden">
+          <span id="depth-legend-min"></span>
+          <div id="depth-legend-bar"></div>
+          <span id="depth-legend-max"></span>
+        </div>
         <div id="view-label" class="overlay-ui hidden"></div>
         <div id="hints" class="overlay-ui">
           <b>LMB</b> orbit / select · <b>RMB / Shift+LMB</b> pan · <b>Wheel</b> zoom ·

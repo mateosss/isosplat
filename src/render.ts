@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { SparkRenderer } from "@sparkjsdev/spark";
 import { Editor } from "./editor";
 import { CameraElement } from "./elements";
+import { updateDepthView } from "./depth";
 import { Viewport } from "./viewport";
 
 const MAX_TARGET = 8192; // Spark's limit for offline targets (including supersampling)
@@ -27,6 +28,9 @@ function cameraFromElement(cam: CameraElement, w: number, h: number) {
  * Uses a dedicated offline Spark renderer: it sorts the splats for the render camera
  * and supersamples 2x when the size allows it.
  */
+/** While a PNG render is running, depth ranges are computed for its camera instead of the viewport's. */
+export let renderCamera: THREE.Camera | null = null;
+
 export async function renderPng(vp: Viewport, editor: Editor, cam: CameraElement | null) {
   let w: number, h: number, camera: THREE.Camera;
   if (cam) {
@@ -56,11 +60,14 @@ export async function renderPng(vp: Viewport, editor: Editor, cam: CameraElement
     vp.helpers.visible = false;
     vp.constraintLine.visible = false;
     renderer.setClearAlpha(transparent ? 0 : 1);
+    renderCamera = camera;
+    updateDepthView(editor, camera);
     await offline.update({ scene, camera }); // sort splats for this viewpoint
     renderer.setClearAlpha(transparent ? 0 : 1); // the live loop may render in between
     const pixels = await offline.renderReadTarget({ scene, camera });
     return { blob: await toPng(pixels, w, h, transparent), width: w, height: h };
   } finally {
+    renderCamera = null;
     offline.dispose();
     renderer.setClearAlpha(clearAlpha);
     editor.setOverlaysVisible(overlays);

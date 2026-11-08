@@ -64,6 +64,7 @@ opacity 0) for gaussians, and as three.js clipping planes for the point-cloud re
 | 2 / 4 / 6 / 8 | orbit 15° down / left / right / up; with Ctrl: pan |
 | 9 / 5 / 0 | opposite side / persp↔ortho / look from (selected or first) camera |
 | Numpad + / − | zoom in / out |
+| Z / ◐ Depth button | toggle depth view (jet colormap) |
 | Ctrl+S / Ctrl+Shift+S / Ctrl+O | save project / save as / open project |
 | Number fields | click to type, drag horizontally to scrub (Shift fine, Ctrl snap, Esc restore) |
 | WASD button | fly mode: WASD move, mouse look, Q/E down/up, Shift faster, wheel = base speed, Esc exits |
@@ -79,6 +80,10 @@ opacity 0) for gaussians, and as three.js clipping planes for the point-cloud re
   camera's resolution; from the free view it uses the viewport's pixel size.
 - **World** (top of the hierarchy): background color, and an option to render PNGs with a
   transparent background.
+- **Depth view** colors gaussians and point clouds by their depth along the camera's view axis with
+  matplotlib's jet colormap (blue = near, red = far); a legend shows the range. The range is fitted
+  automatically to the visible scene (splat bounds clipped by the cut-planes) or set manually in the
+  World properties. PNG renders use the depth range of the render camera.
 
 View keys work on the numpad and on the top-row digits. Browsers often reserve Ctrl+1…8 for
 switching tabs, which is why Shift also selects the opposite view.

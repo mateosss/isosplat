@@ -9,7 +9,8 @@ import { HierarchyPanel } from "./ui/hierarchy";
 import { PropertiesPanel } from "./ui/properties";
 import { toast } from "./ui/toast";
 import { CameraElement } from "./elements";
-import { renderPng } from "./render";
+import { renderCamera, renderPng } from "./render";
+import { JET_CSS, depthRange, updateDepthView } from "./depth";
 import { PROJECT_EXTENSION, applyProject, buildProject, rebindSources } from "./project";
 import { isAbort, openFile, saveBlob } from "./ui/files";
 
@@ -220,6 +221,28 @@ $("btn-save").addEventListener("click", () => saveProject(false));
 $("btn-save-as").addEventListener("click", () => saveProject(true));
 $("btn-render").addEventListener("click", () => renderAndSave(null));
 
+// ------------------------------------------------------------------ depth view
+
+const btnDepth = $("btn-depth");
+const legend = $("depth-legend");
+$("depth-legend-bar").style.background = JET_CSS;
+function setDepthView(on: boolean) {
+  editor.world.depthView = on;
+  editor.emit("props");
+}
+btnDepth.addEventListener("click", () => setDepthView(!editor.world.depthView));
+function updateDepthLegend() {
+  const on = editor.world.depthView;
+  btnDepth.classList.toggle("active", on);
+  legend.classList.toggle("hidden", !on);
+  if (!on) return;
+  const fmt = (v: number) => `${v < 10 ? v.toFixed(2) : v.toFixed(1)} m`;
+  const lo = fmt(depthRange.min), hi = fmt(depthRange.max);
+  const minEl = $("depth-legend-min"), maxEl = $("depth-legend-max");
+  if (minEl.textContent !== lo) minEl.textContent = lo;
+  if (maxEl.textContent !== hi) maxEl.textContent = hi;
+}
+
 // Drag & drop
 const dropHint = $("drop-hint");
 window.addEventListener("dragover", (e) => {
@@ -348,6 +371,8 @@ window.addEventListener("keydown", (e) => {
     if (!mouseInViewport) return;
     e.preventDefault();
     transform.begin(key.toUpperCase() as TransformMode, mouse);
+  } else if (key === "z") {
+    setDepthView(!editor.world.depthView);
   } else if (e.key === "Delete") {
     deleteSelected();
   } else if (key === "f") {
@@ -371,6 +396,8 @@ function tick(time: number) {
   else if (!vp.lockedCamera && vp.controls.enabled) vp.controls.update();
   vp.update();
   editor.updateCuts();
+  updateDepthView(editor, renderCamera ?? vp.activeCam);
+  updateDepthLegend();
   if (editor.overlaysVisible) gizmo.draw(vp.activeCam);
   props.sync();
   const projLabel = vp.isOrtho ? "Ortho" : "Persp";
