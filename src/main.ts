@@ -73,6 +73,9 @@ btnOverlays.addEventListener("click", () => setOverlays(!editor.overlaysVisible)
 btnProjection.addEventListener("click", () => vp.toggleProjection());
 $("btn-iso").addEventListener("click", () => vp.isoView());
 $("btn-frame").addEventListener("click", () => vp.frame(editor.selected));
+$("btn-orbit-center").addEventListener("click", () => {
+  if (!vp.centerOrbitAtViewCenter()) toast("Nothing under the viewport center");
+});
 
 // ------------------------------------------------------------------ hierarchy actions
 
@@ -193,17 +196,38 @@ window.addEventListener("keydown", (e) => {
   if (transform.onKey(e)) return e.preventDefault();
   if (e.metaKey || e.altKey) return;
 
-  const numpadView = (dir: THREE.Vector3) => vp.snapView(e.ctrlKey ? dir.negate() : dir);
-  switch (e.code) {
-    case "Numpad5": return vp.toggleProjection();
-    case "Numpad1": return numpadView(new THREE.Vector3(0, -1, 0));
-    case "Numpad3": return numpadView(new THREE.Vector3(1, 0, 0));
-    case "Numpad7": return numpadView(new THREE.Vector3(0, 0, 1));
-    case "Numpad0": {
-      const cam = editor.selected instanceof CameraElement ? editor.selected : editor.cameras()[0];
-      if (cam) vp.lookFrom(cam);
-      return;
+  // Blender numpad navigation. The top-row digits do the same for keyboards without a numpad.
+  // "Opposite" views use Ctrl (Blender) or Shift (browsers often reserve Ctrl+1..8 for tab switching).
+  const digit = /^(?:Numpad|Digit)([0-9])$/.exec(e.code)?.[1];
+  if (digit !== undefined) {
+    e.preventDefault();
+    const opposite = e.ctrlKey || e.shiftKey;
+    const view = (dir: THREE.Vector3) => vp.snapView(opposite ? dir.negate() : dir);
+    switch (digit) {
+      case "1": return view(new THREE.Vector3(0, -1, 0)); // front (Ctrl: back)
+      case "3": return view(new THREE.Vector3(1, 0, 0)); // right (Ctrl: left)
+      case "7": return view(new THREE.Vector3(0, 0, 1)); // top (Ctrl: bottom)
+      case "5": return vp.toggleProjection();
+      case "9": return vp.orbitBy(180, 0); // opposite side
+      case "0": {
+        const cam = editor.selected instanceof CameraElement ? editor.selected : editor.cameras()[0];
+        if (cam) vp.lookFrom(cam);
+        return;
+      }
+      // 4/6/8/2: orbit 15°; with Ctrl: pan.
+      case "4": return e.ctrlKey ? vp.panBy(-0.1, 0) : vp.orbitBy(-15, 0);
+      case "6": return e.ctrlKey ? vp.panBy(0.1, 0) : vp.orbitBy(15, 0);
+      case "8": return e.ctrlKey ? vp.panBy(0, 0.1) : vp.orbitBy(0, 15);
+      case "2": return e.ctrlKey ? vp.panBy(0, -0.1) : vp.orbitBy(0, -15);
     }
+    return;
+  }
+  switch (e.code) {
+    case "NumpadAdd": return vp.zoomBy(0.8);
+    case "NumpadSubtract": return vp.zoomBy(1.25);
+    case "NumpadDecimal":
+    case "Period": return vp.frame(editor.selected); // view selected
+    case "Home": return vp.frame(null); // view all
   }
   if (e.ctrlKey) return;
 
@@ -216,7 +240,8 @@ window.addEventListener("keydown", (e) => {
   } else if (e.key === "Delete") {
     deleteSelected();
   } else if (key === "f") {
-    vp.frame(editor.selected);
+    if (!mouseInViewport) return;
+    if (!vp.centerOrbitAtCursor(mouse.x, mouse.y)) toast("No surface under the cursor: centered on the current focus depth");
   }
 });
 

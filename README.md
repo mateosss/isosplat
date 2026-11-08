@@ -56,9 +56,18 @@ opacity 0) for gaussians, and as three.js clipping planes for the point-cloud re
 | digits, `-`, Backspace | type an exact value (metres / degrees / factor) |
 | Ctrl / Shift during G/R/S | snap / precision |
 | LMB or Enter / RMB or Esc | confirm / cancel transform |
-| F | frame selected (or all splats) |
+| F | orbit around the surface under the mouse cursor (view pans to center it) |
+| ⊕ Orbit center button | orbit around the surface at the viewport center (view doesn't move) |
+| Numpad . / Period, Home | frame selected / frame all splats |
 | Del | delete selected |
-| Numpad 1/3/7 (Ctrl = opposite), 5, 0 | front/right/top view, persp↔ortho, look from camera |
+| 1 / 3 / 7 | front / right / top view; with Ctrl (or Shift) back / left / bottom |
+| 2 / 4 / 6 / 8 | orbit 15° down / left / right / up; with Ctrl: pan |
+| 9 / 5 / 0 | opposite side / persp↔ortho / look from (selected or first) camera |
+| Numpad + / − | zoom in / out |
+| Number fields | click to type, drag horizontally to scrub (Shift fine, Ctrl snap, Esc restore) |
 | WASD button | fly mode: WASD move, mouse look, Q/E down/up, Shift faster, wheel = base speed, Esc exits |
+
+View keys work on the numpad and on the top-row digits. Browsers often reserve Ctrl+1…8 for
+switching tabs, which is why Shift also selects the opposite view.
 
 Drag & drop `.ply` (also `.spz`, `.splat`, `.ksplat`, `.sog`) files onto the window to import.

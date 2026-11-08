@@ -82,7 +82,7 @@ button:disabled { opacity: 0.4; cursor: default; }
 
 #view-label {
   position: absolute;
-  bottom: 30px;
+  bottom: 46px;
   left: 8px;
   color: #eee;
   text-shadow: 0 0 3px #000;
@@ -98,9 +98,7 @@ button:disabled { opacity: 0.4; cursor: default; }
   font-size: 11px;
   text-shadow: 0 0 3px #000;
   pointer-events: none;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.5;
 }
 
 #camera-frame {
@@ -252,3 +250,10 @@ button:disabled { opacity: 0.4; cursor: default; }
   z-index: 10;
 }
 #toast.show { opacity: 1; }
+
+/* Number fields: drag horizontally to scrub (Blender-like); no spinners. */
+.p-row input[type="number"] { cursor: ew-resize; -moz-appearance: textfield; appearance: textfield; }
+.p-row input[type="number"]:focus { cursor: text; }
+.p-row input[type="number"]::-webkit-inner-spin-button,
+.p-row input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.p-row .field.scrubbing input { outline: 1px solid var(--accent); background: #2b2219; }

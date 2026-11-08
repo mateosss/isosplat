@@ -28,6 +28,17 @@ export class Viewport {
   readonly constraintLine: THREE.Line;
   width = 1;
   height = 1;
+  /** Short view transition: target lerps, orbit offset rotates about `axis` and changes length. */
+  private anim: {
+    t0: number;
+    target0: THREE.Vector3;
+    target1: THREE.Vector3;
+    off0: THREE.Vector3;
+    axis: THREE.Vector3 | null;
+    angle: number;
+    len0: number;
+    len1: number;
+  } | null = null;
   onViewChanged: () => void = () => {};
 
   constructor(
@@ -52,7 +63,10 @@ export class Viewport {
     this.controls.enableDamping = false;
     this.controls.zoomToCursor = true;
     this.controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN };
-    this.controls.addEventListener("start", () => this.unlock());
+    this.controls.addEventListener("start", () => {
+      this.anim = null;
+      this.unlock();
+    });
     this.controls.update();
 
     this.buildHelpers();
@@ -260,6 +274,7 @@ export class Viewport {
   // ---------------------------------------------------------------- per-frame
 
   update() {
+    this.stepAnim();
     if (this.lockedCamera) {
       if (!this.editor.elements.includes(this.lockedCamera)) this.unlock();
       else this.applyLock();
@@ -276,6 +291,117 @@ export class Viewport {
 
   render() {
     this.renderer.render(this.editor.scene, this.activeCam);
+  }
+
+  // ---------------------------------------------------------------- navigation (orbit center, numpad)
+
+  private animate(target1: THREE.Vector3, axis: THREE.Vector3 | null = null, angle = 0, len1?: number) {
+    this.unlock();
+    const off0 = this.activeCam.position.clone().sub(this.controls.target);
+    this.anim = {
+      t0: performance.now(),
+      target0: this.controls.target.clone(),
+      target1: target1.clone(),
+      off0,
+      axis: axis?.clone().normalize() ?? null,
+      angle,
+      len0: off0.length(),
+      len1: len1 ?? off0.length(),
+    };
+  }
+
+  private stepAnim() {
+    const a = this.anim;
+    if (!a) return;
+    if (!this.controls.enabled || this.lockedCamera) {
+      this.anim = null;
+      return;
+    }
+    const t = Math.min(1, (performance.now() - a.t0) / 250);
+    const e = t * t * (3 - 2 * t);
+    this.controls.target.lerpVectors(a.target0, a.target1, e);
+    const off = a.off0.clone();
+    if (a.axis) off.applyAxisAngle(a.axis, a.angle * e);
+    off.setLength(THREE.MathUtils.lerp(a.len0, a.len1, e));
+    this.activeCam.position.copy(this.controls.target).add(off);
+    this.controls.update();
+    if (t >= 1) this.anim = null;
+  }
+
+  /** Visible surface point (splats, respecting cut-planes) under a viewport pixel. */
+  pickPoint(x: number, y: number): THREE.Vector3 | null {
+    const raycaster = new THREE.Raycaster();
+    this.activeCam.updateMatrixWorld();
+    raycaster.setFromCamera(this.toNdc(x, y), this.activeCam);
+    let best: THREE.Vector3 | null = null;
+    let bestT = Infinity;
+    for (const el of this.editor.splats()) {
+      if (!el.loaded || !el.visible) continue;
+      const hit = raycaster.intersectObject(el.mesh, false).find((h) => !this.editor.isCut(h.point));
+      if (hit && hit.distance < bestT) {
+        bestT = hit.distance;
+        best = hit.point.clone();
+      }
+    }
+    return best;
+  }
+
+  /** Make `point` the orbit center, panning (not rotating) so it ends up at the view center. */
+  centerOrbitAt(point: THREE.Vector3) {
+    const cam = this.activeCam;
+    const len1 = this.isOrtho ? cam.position.distanceTo(this.controls.target) : Math.max(0.05, cam.position.distanceTo(point));
+    this.animate(point, null, 0, len1);
+  }
+
+  /** Orbit center <- surface under the viewport center (view doesn't move). Returns false if nothing is there. */
+  centerOrbitAtViewCenter() {
+    const p = this.pickPoint(this.width / 2, this.height / 2);
+    if (!p) return false;
+    this.centerOrbitAt(p);
+    return true;
+  }
+
+  /** Orbit center <- surface under the cursor, or the point on the current focal plane if there's no surface. */
+  centerOrbitAtCursor(x: number, y: number) {
+    let p = this.pickPoint(x, y);
+    const hitSurface = !!p;
+    if (!p) {
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(this.toNdc(x, y), this.activeCam);
+      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(this.forward(), this.controls.target);
+      p = raycaster.ray.intersectPlane(plane, new THREE.Vector3());
+    }
+    if (p) this.centerOrbitAt(p);
+    return hitSurface;
+  }
+
+  /** Orbit around the target: yaw about world Z, pitch about the view's right axis (degrees; + = camera moves right / up). */
+  orbitBy(yawDeg: number, pitchDeg: number) {
+    const rad = THREE.MathUtils.degToRad;
+    if (yawDeg) this.animate(this.controls.target, UP, rad(yawDeg));
+    else {
+      const right = new THREE.Vector3().setFromMatrixColumn(this.activeCam.matrixWorld, 0);
+      this.animate(this.controls.target, right, -rad(pitchDeg));
+    }
+  }
+
+  /** Pan by a fraction of the visible height (+x = view moves right, +y = up). */
+  panBy(fx: number, fy: number) {
+    const h = this.visibleHeightAtTarget();
+    const right = new THREE.Vector3().setFromMatrixColumn(this.activeCam.matrixWorld, 0);
+    const up = new THREE.Vector3().setFromMatrixColumn(this.activeCam.matrixWorld, 1);
+    this.animate(this.controls.target.clone().addScaledVector(right, fx * h).addScaledVector(up, fy * h));
+  }
+
+  /** factor < 1 zooms in. */
+  zoomBy(factor: number) {
+    this.unlock();
+    if (this.isOrtho) {
+      this.orthoCam.zoom /= factor;
+      this.orthoCam.updateProjectionMatrix();
+    } else {
+      this.animate(this.controls.target, null, 0, this.perspCam.position.distanceTo(this.controls.target) * factor);
+    }
   }
 
   // ---------------------------------------------------------------- math helpers

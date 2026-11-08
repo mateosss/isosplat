@@ -59,12 +59,17 @@ export class PropertiesPanel {
       return;
     }
     const q = el.root.quaternion;
+    // While scrubbing, edit from a snapshot so re-normalisation doesn't drift the other components.
+    let base: THREE.Quaternion | null = null;
     s.append(this.row("Rotation (quat)", ...(["x", "y", "z", "w"] as const).map((k) =>
       this.number(() => q[k], (v) => {
+        if (base) q.copy(base);
         q[k] = v;
         if (q.lengthSq() < 1e-12) q.identity();
         q.normalize();
-      }, { tag: k, step: 0.05 }))));
+      }, { tag: k, step: 0.05, onDragStart: () => (base = q.clone()) }))));
+    // Typing (not scrubbing) should use the current value.
+    s.addEventListener("focusin", () => (base = null));
     if (el.canScale) {
       const sc = el.root.scale;
       s.append(this.row("Scale", ...(["x", "y", "z"] as const).map((k) =>
@@ -220,12 +225,21 @@ export class PropertiesPanel {
     return p;
   }
 
-  private number(get: () => number, set: (v: number) => void, opts: { tag?: string; step?: number } = {}) {
+  /**
+   * Numeric field. Click to type; press and drag horizontally to scrub the value
+   * (Shift = fine, Ctrl = snap to step). Esc while dragging restores the value.
+   */
+  private number(
+    get: () => number,
+    set: (v: number) => void,
+    opts: { tag?: string; step?: number; onDragStart?: () => void } = {},
+  ) {
     const wrap = document.createElement("div");
     wrap.className = "field";
     const input = document.createElement("input");
     input.type = "number";
-    input.step = String(opts.step ?? 0.1);
+    const step = opts.step ?? 0.1;
+    input.step = String(step);
     if (opts.tag) {
       wrap.classList.add("has-tag");
       if (opts.tag.length > 1) wrap.classList.add("wide-tag");
@@ -246,9 +260,58 @@ export class PropertiesPanel {
       if (e.key === "Enter") input.blur();
       e.stopPropagation();
     });
+
+    // ---- drag to scrub
+    let drag: { startX: number; startValue: number; dx: number; dragging: boolean; id: number } | null = null;
+    const endDrag = (restore: boolean) => {
+      if (!drag) return;
+      if (input.hasPointerCapture(drag.id)) input.releasePointerCapture(drag.id);
+      if (restore && drag.dragging) set(drag.startValue);
+      const wasDrag = drag.dragging;
+      drag = null;
+      wrap.classList.remove("scrubbing");
+      document.removeEventListener("keydown", onEsc, true);
+      input.value = fmt(get());
+      if (!wasDrag && !restore) {
+        input.focus();
+        input.select();
+      }
+    };
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      e.preventDefault();
+      endDrag(true);
+    };
+    input.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 || document.activeElement === input) return; // already editing: normal text behaviour
+      e.preventDefault(); // don't focus yet; decide on pointerup whether it was a click or a drag
+      input.setPointerCapture(e.pointerId);
+      drag = { startX: e.clientX, startValue: get(), dx: 0, dragging: false, id: e.pointerId };
+      document.addEventListener("keydown", onEsc, true);
+    });
+    input.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      drag.dx += e.movementX * (e.shiftKey ? 0.1 : 1);
+      if (!drag.dragging && Math.abs(e.clientX - drag.startX) > 3) {
+        drag.dragging = true;
+        drag.dx = e.clientX - drag.startX;
+        wrap.classList.add("scrubbing");
+        opts.onDragStart?.();
+      }
+      if (!drag.dragging) return;
+      // 10 px per step: position (0.1) -> 1 cm/px, focal (10) -> 1 px/px
+      let v = drag.startValue + (drag.dx * step) / 10;
+      if (e.ctrlKey) v = Math.round(v / step) * step;
+      set(v);
+      input.value = fmt(get());
+    });
+    input.addEventListener("pointerup", () => endDrag(false));
+    input.addEventListener("pointercancel", () => endDrag(true));
+
     this.bindings.push({
       sync: () => {
-        if (document.activeElement === input) return;
+        if (document.activeElement === input || drag?.dragging) return;
         const t = fmt(get());
         if (input.value !== t) input.value = t;
       },

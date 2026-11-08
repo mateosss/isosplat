@@ -17,14 +17,16 @@
           <button id="btn-overlays" title="Toggle all overlays (grid, axes, wireframes, outlines…)">◧ Overlays</button>
           <button id="btn-projection" title="Toggle perspective / orthographic (Numpad 5)">Persp</button>
           <button id="btn-iso" title="Orthographic isometric view">Iso</button>
-          <button id="btn-frame" title="Frame selected (F)">Frame</button>
+          <button id="btn-frame" title="Frame selected (Numpad . / Period)">Frame</button>
+          <button id="btn-orbit-center" title="Set the orbit center to the surface at the viewport center (F: at the mouse cursor)">⊕ Orbit center</button>
         </div>
         <canvas id="axis-gizmo" class="overlay-ui" title="Click an axis to align the view"></canvas>
         <div id="hud" class="hidden"></div>
         <div id="view-label" class="overlay-ui hidden"></div>
         <div id="hints" class="overlay-ui">
           <b>LMB</b> orbit / select · <b>RMB / Shift+LMB</b> pan · <b>Wheel</b> zoom ·
-          <b>G/R/S</b> move/rotate/scale (then <b>X/Y/Z</b>, twice = local) · <b>F</b> frame · <b>Del</b> delete
+          <b>G/R/S</b> move/rotate/scale (then <b>X/Y/Z</b>, twice = local) · <b>F</b> orbit around cursor ·
+          <b>1/3/7</b> front/right/top (Ctrl/Shift = opposite) · <b>2/4/6/8</b> orbit · <b>.</b> frame · <b>Del</b> delete
         </div>
         <div id="drop-hint" class="hidden">Drop .ply files to import</div>
       </main>
