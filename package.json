@@ -1,0 +1,22 @@
+{
+  "name": "isosplat",
+  "version": "0.1.0",
+  "description": "Isometric 3D Gaussian Splatting viewer with cut-planes",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@sparkjsdev/spark": "^2.4.0",
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.187.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.6"
+  },
+  "private": true,
+  "type": "module"
+}

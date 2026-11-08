@@ -23,3 +23,42 @@ For this, this app will have the following characteristics:
 - One for entering WASD movement: when clicked I move with WASD and mouse like a shooter game, (shift to go faster, mouse scroll wheel to increase/decrease the base velocity), when I press esc, I go back to regular viewer mode
 - Regular viewer mode allows me to orbit, zoom in and pan the viewer
 - There is also a button in the viewer that toggles all outlines from the viewer: cut-planes wireless render, orange selection outline, floor grid, X Y Z axes, and anything else
+
+---
+
+## Running
+
+```sh
+npm install
+npm run dev       # http://localhost:5173
+npm run build     # typecheck + production build in dist/
+```
+
+Built with [three.js](https://threejs.org) and [Spark](https://sparkjs.dev) (3DGS renderer).
+Cut-planes are implemented as a global Spark `SplatEdit` (one PLANE SDF per enabled cut-plane,
+opacity 0) for gaussians, and as three.js clipping planes for the point-cloud render.
+
+## Conventions
+
+- World is **Z-up** (like Blender); the floor grid is the XY plane.
+- Cameras use the three.js convention: they look down local **−Z** with **+Y** up.
+  Pinhole intrinsics (fx, fy, cx, cy) are in pixels of the camera resolution, OpenCV style.
+- Orthographic scale is the world size covered by the larger image side (like Blender).
+
+## Controls
+
+| Input | Action |
+| --- | --- |
+| LMB drag / RMB drag / wheel | orbit / pan / zoom (Shift+LMB also pans) |
+| LMB click | select splat, camera or cut-plane (click on the plane border or arrow) |
+| G / R / S | move / rotate / scale the selection (mouse must be over the viewport) |
+| X / Y / Z during G/R/S | constrain to global axis; press again for local; again to clear |
+| digits, `-`, Backspace | type an exact value (metres / degrees / factor) |
+| Ctrl / Shift during G/R/S | snap / precision |
+| LMB or Enter / RMB or Esc | confirm / cancel transform |
+| F | frame selected (or all splats) |
+| Del | delete selected |
+| Numpad 1/3/7 (Ctrl = opposite), 5, 0 | front/right/top view, persp↔ortho, look from camera |
+| WASD button | fly mode: WASD move, mouse look, Q/E down/up, Shift faster, wheel = base speed, Esc exits |
+
+Drag & drop `.ply` (also `.spz`, `.splat`, `.ksplat`, `.sog`) files onto the window to import.

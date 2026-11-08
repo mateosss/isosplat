@@ -1,0 +1,310 @@
+import * as THREE from "three";
+import { Editor } from "../editor";
+import { CameraElement, CUT_DIRECTIONS, CutPlaneElement, SceneElement, SplatElement } from "../elements";
+import { Viewport } from "../viewport";
+
+type Binding = { sync: () => void };
+
+/** Properties of the selected element. Values are re-synced every frame (except the focused field). */
+export class PropertiesPanel {
+  private bindings: Binding[] = [];
+
+  constructor(private body: HTMLElement, private editor: Editor, private vp: Viewport) {
+    editor.on("selection", () => this.render());
+    editor.on("elements", () => {
+      if (editor.selected && !editor.elements.includes(editor.selected)) this.render();
+    });
+    this.render();
+  }
+
+  sync() {
+    for (const b of this.bindings) b.sync();
+  }
+
+  render() {
+    this.bindings = [];
+    this.body.replaceChildren();
+    const el = this.editor.selected;
+    if (!el) {
+      const p = document.createElement("div");
+      p.className = "p-empty";
+      p.textContent = "Nothing selected. Click an element in the hierarchy or the viewport.";
+      this.body.append(p);
+      return;
+    }
+
+    const general = this.section("Object");
+    general.append(
+      this.row("Name", this.text(() => el.name, (v) => {
+        el.name = v || el.name;
+        this.editor.emit("elements");
+      })),
+    );
+
+    this.transformSection(el);
+    if (el instanceof CameraElement) this.cameraSection(el);
+    if (el instanceof SplatElement) this.splatSection(el);
+    if (el instanceof CutPlaneElement) this.cutSection(el);
+  }
+
+  // ----------------------------------------------------------- sections
+
+  private transformSection(el: SceneElement) {
+    const s = this.section("Transform");
+    const p = el.root.position;
+    s.append(this.row("Position", ...(["x", "y", "z"] as const).map((k) =>
+      this.number(() => p[k], (v) => (p[k] = v), { tag: k, step: 0.1 }))));
+    if (el.kind === "cutplane") {
+      s.append(this.note("Cut-planes can only be moved; use the cut direction below to orient them."));
+      return;
+    }
+    const q = el.root.quaternion;
+    s.append(this.row("Rotation (quat)", ...(["x", "y", "z", "w"] as const).map((k) =>
+      this.number(() => q[k], (v) => {
+        q[k] = v;
+        if (q.lengthSq() < 1e-12) q.identity();
+        q.normalize();
+      }, { tag: k, step: 0.05 }))));
+    if (el.canScale) {
+      const sc = el.root.scale;
+      s.append(this.row("Scale", ...(["x", "y", "z"] as const).map((k) =>
+        this.number(() => sc[k], (v) => (sc[k] = v), { tag: k, step: 0.1 }))));
+    }
+    const buttons = document.createElement("div");
+    buttons.className = "p-buttons";
+    buttons.append(this.button("Reset rotation", () => q.identity()));
+    s.append(buttons);
+  }
+
+  private cameraSection(cam: CameraElement) {
+    const s = this.section("Camera");
+    const changed = () => cam.rebuildGizmo();
+    s.append(this.row("Type", this.segmented(
+      [["pinhole", "Pinhole"], ["orthographic", "Orthographic"]],
+      () => cam.type,
+      (v) => {
+        cam.type = v as CameraElement["type"];
+        changed();
+        this.render();
+      },
+    )));
+    s.append(this.row("Resolution",
+      this.number(() => cam.width, (v) => { cam.width = Math.max(1, Math.round(v)); changed(); }, { tag: "w", step: 1 }),
+      this.number(() => cam.height, (v) => { cam.height = Math.max(1, Math.round(v)); changed(); }, { tag: "h", step: 1 }),
+    ));
+    if (cam.type === "pinhole") {
+      s.append(this.row("Focal (px)",
+        this.number(() => cam.fx, (v) => { cam.fx = Math.max(1, v); changed(); }, { tag: "fx", step: 10 }),
+        this.number(() => cam.fy, (v) => { cam.fy = Math.max(1, v); changed(); }, { tag: "fy", step: 10 }),
+      ));
+      s.append(this.row("Principal (px)",
+        this.number(() => cam.cx, (v) => { cam.cx = v; changed(); }, { tag: "cx", step: 1 }),
+        this.number(() => cam.cy, (v) => { cam.cy = v; changed(); }, { tag: "cy", step: 1 }),
+      ));
+      const fov = document.createElement("span");
+      fov.className = "value";
+      this.bindings.push({
+        sync: () => {
+          const h = THREE.MathUtils.radToDeg(2 * Math.atan(cam.width / (2 * cam.fx)));
+          const v = THREE.MathUtils.radToDeg(2 * Math.atan(cam.height / (2 * cam.fy)));
+          const t = `${h.toFixed(1)}° × ${v.toFixed(1)}°`;
+          if (fov.textContent !== t) fov.textContent = t;
+        },
+      });
+      s.append(this.row("FOV (h × v)", fov));
+    } else {
+      s.append(this.row("Ortho scale",
+        this.number(() => cam.orthoScale, (v) => { cam.orthoScale = Math.max(0.001, v); changed(); }, { step: 0.5 })));
+      s.append(this.note("World size covered by the larger image side (like Blender)."));
+    }
+    s.append(this.row("Clip near/far",
+      this.number(() => cam.near, (v) => (cam.near = Math.max(1e-4, v)), { step: 0.01 }),
+      this.number(() => cam.far, (v) => (cam.far = Math.max(cam.near + 1e-3, v)), { step: 10 }),
+    ));
+    const buttons = document.createElement("div");
+    buttons.className = "p-buttons";
+    buttons.append(
+      this.button("👁 Look from camera", () => this.vp.lookFrom(cam)),
+      this.button("Set from current view", () => {
+        this.vp.copyViewToCamera(cam);
+        this.render();
+      }),
+    );
+    s.append(buttons);
+    s.append(this.note("Camera looks along its local −Z axis with +Y up (three.js convention)."));
+  }
+
+  private splatSection(sp: SplatElement) {
+    const s = this.section("3DGS scene");
+    if (!sp.loaded) {
+      s.append(this.note("Loading…"));
+      sp.ready.then(() => this.editor.selected === sp && this.render()).catch(() => {});
+      return;
+    }
+    s.append(this.row("Render", this.segmented(
+      [["splat", "Gaussians"], ["points", "Point cloud"]],
+      () => sp.renderMode,
+      (v) => {
+        sp.setRenderMode(v as SplatElement["renderMode"]);
+        this.editor.emit("props");
+        this.render();
+      },
+    )));
+    if (sp.renderMode === "points") {
+      s.append(this.row("Point size (px)",
+        this.number(() => sp.pointSize, (v) => sp.setPointSize(Math.max(0.5, v)), { step: 0.5 })));
+    }
+    s.append(this.row("Visible", this.checkbox(() => sp.visible, (v) => {
+      sp.setVisible(v);
+      this.editor.emit("props");
+    })));
+    const info = document.createElement("span");
+    info.className = "value";
+    info.textContent = `${sp.numSplats.toLocaleString()} gaussians`;
+    s.append(this.row("Info", info));
+    const buttons = document.createElement("div");
+    buttons.className = "p-buttons";
+    buttons.append(this.button("Frame in view", () => this.vp.frame(sp)));
+    s.append(buttons);
+  }
+
+  private cutSection(cut: CutPlaneElement) {
+    const s = this.section("Cut-plane");
+    s.append(this.row("Cut direction", this.segmented(
+      CUT_DIRECTIONS.map((d) => [d, d] as [string, string]),
+      () => cut.direction,
+      (v) => {
+        cut.setDirection(v as CutPlaneElement["direction"]);
+        this.editor.emit("props");
+      },
+    )));
+    s.append(this.row("Enabled", this.checkbox(() => cut.enabled, (v) => {
+      cut.setEnabled(v);
+      this.editor.emit("props");
+    })));
+    s.append(this.row("Display size",
+      this.number(() => cut.size, (v) => cut.setSize(v), { step: 0.5 })));
+    const axis = cut.direction[1];
+    const op = cut.direction[0] === "+" ? "<" : ">";
+    s.append(this.note(`Hides every gaussian with ${axis.toLowerCase()} ${op} plane ${axis.toLowerCase()}. The arrow points to the side that is kept.`));
+  }
+
+  // ----------------------------------------------------------- widgets
+
+  private section(title: string) {
+    const s = document.createElement("div");
+    s.className = "p-section";
+    const h = document.createElement("h3");
+    h.textContent = title;
+    s.append(h);
+    this.body.append(s);
+    return s;
+  }
+
+  private row(label: string, ...fields: HTMLElement[]) {
+    const r = document.createElement("div");
+    r.className = "p-row";
+    const l = document.createElement("label");
+    l.textContent = label;
+    const f = document.createElement("div");
+    f.className = "fields";
+    f.append(...fields);
+    r.append(l, f);
+    return r;
+  }
+
+  private note(text: string) {
+    const p = document.createElement("div");
+    p.className = "p-note";
+    p.textContent = text;
+    return p;
+  }
+
+  private number(get: () => number, set: (v: number) => void, opts: { tag?: string; step?: number } = {}) {
+    const wrap = document.createElement("div");
+    wrap.className = "field";
+    const input = document.createElement("input");
+    input.type = "number";
+    input.step = String(opts.step ?? 0.1);
+    if (opts.tag) {
+      wrap.classList.add("has-tag");
+      if (opts.tag.length > 1) wrap.classList.add("wide-tag");
+      const tag = document.createElement("span");
+      tag.textContent = opts.tag.toUpperCase();
+      tag.className = `ax-${opts.tag}`;
+      wrap.append(tag);
+    }
+    wrap.append(input);
+    const fmt = (v: number) => String(Number(v.toFixed(4)));
+    input.value = fmt(get());
+    input.addEventListener("change", () => {
+      const v = parseFloat(input.value);
+      if (Number.isFinite(v)) set(v);
+      input.value = fmt(get());
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") input.blur();
+      e.stopPropagation();
+    });
+    this.bindings.push({
+      sync: () => {
+        if (document.activeElement === input) return;
+        const t = fmt(get());
+        if (input.value !== t) input.value = t;
+      },
+    });
+    return wrap;
+  }
+
+  private text(get: () => string, set: (v: string) => void) {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = get();
+    input.addEventListener("change", () => set(input.value.trim()));
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") input.blur();
+      e.stopPropagation();
+    });
+    this.bindings.push({
+      sync: () => {
+        if (document.activeElement !== input && input.value !== get()) input.value = get();
+      },
+    });
+    return input;
+  }
+
+  private checkbox(get: () => boolean, set: (v: boolean) => void) {
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = get();
+    input.addEventListener("change", () => set(input.checked));
+    this.bindings.push({ sync: () => void (input.checked = get()) });
+    return input;
+  }
+
+  private segmented(options: [string, string][], get: () => string, set: (v: string) => void) {
+    const seg = document.createElement("div");
+    seg.className = "seg";
+    const buttons = options.map(([value, label]) => {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.addEventListener("click", () => {
+        set(value);
+        update();
+      });
+      seg.append(b);
+      return { b, value };
+    });
+    const update = () => buttons.forEach(({ b, value }) => b.classList.toggle("active", get() === value));
+    update();
+    this.bindings.push({ sync: update });
+    return seg;
+  }
+
+  private button(label: string, onClick: () => void) {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.addEventListener("click", onClick);
+    return b;
+  }
+}

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IsoSplat</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M8 1l6 3.5v7L8 15l-6-3.5v-7z' fill='%23ff8c1a'/></svg>" />
+  </head>
+  <body>
+    <div id="app">
+      <main id="viewport">
+        <canvas id="canvas"></canvas>
+        <div id="camera-frame" class="overlay-ui hidden"></div>
+        <div id="toolbar">
+          <button id="btn-fullscreen" title="Fullscreen viewer (Esc to exit)">⛶ Fullscreen</button>
+          <button id="btn-fly" title="WASD fly mode (Esc to exit)">✈ WASD</button>
+          <button id="btn-overlays" title="Toggle all overlays (grid, axes, wireframes, outlines…)">◧ Overlays</button>
+          <button id="btn-projection" title="Toggle perspective / orthographic (Numpad 5)">Persp</button>
+          <button id="btn-iso" title="Orthographic isometric view">Iso</button>
+          <button id="btn-frame" title="Frame selected (F)">Frame</button>
+        </div>
+        <canvas id="axis-gizmo" class="overlay-ui" title="Click an axis to align the view"></canvas>
+        <div id="hud" class="hidden"></div>
+        <div id="view-label" class="overlay-ui hidden"></div>
+        <div id="hints" class="overlay-ui">
+          <b>LMB</b> orbit / select · <b>RMB / Shift+LMB</b> pan · <b>Wheel</b> zoom ·
+          <b>G/R/S</b> move/rotate/scale (then <b>X/Y/Z</b>, twice = local) · <b>F</b> frame · <b>Del</b> delete
+        </div>
+        <div id="drop-hint" class="hidden">Drop .ply files to import</div>
+      </main>
+      <aside id="sidebar">
+        <section id="hierarchy" class="panel">
+          <header>
+            <h2>Hierarchy</h2>
+            <div class="actions">
+              <button id="btn-import" title="Import a .ply gaussian splat">Import PLY</button>
+              <button id="btn-add-camera" title="Add a camera at the current view">+ Camera</button>
+              <button id="btn-add-cut" title="Add a cut-plane">+ Cut</button>
+              <button id="btn-delete" class="danger" title="Delete selected (Del)">Delete</button>
+            </div>
+          </header>
+          <div id="hierarchy-list" class="panel-body"></div>
+          <input id="file-input" type="file" accept=".ply,.spz,.splat,.ksplat,.sog" multiple hidden />
+        </section>
+        <section id="properties" class="panel">
+          <header><h2>Properties</h2></header>
+          <div id="properties-body" class="panel-body"></div>
+        </section>
+      </aside>
+    </div>
+    <div id="toast"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,455 @@
+import * as THREE from "three";
+import { SplatEditSdf, SplatEditSdfType, SplatMesh } from "@sparkjsdev/spark";
+
+export const SELECT_COLOR = new THREE.Color(0xff8c1a);
+export const AXIS_COLORS = [new THREE.Color(0xff3352), new THREE.Color(0x8bdc00), new THREE.Color(0x2890ff)];
+
+export type ElementKind = "camera" | "splat" | "cutplane";
+
+let nextId = 1;
+
+/**
+ * Base class for everything that lives in the hierarchy. `root` holds the pose
+ * (position / quaternion / scale) and is a direct child of the scene, so local == world.
+ */
+export abstract class SceneElement {
+  readonly id = nextId++;
+  abstract readonly kind: ElementKind;
+  readonly root = new THREE.Object3D();
+  name: string;
+  selected = false;
+  overlaysVisible = true;
+  canRotate = true;
+  canScale = true;
+
+  constructor(name: string) {
+    this.name = name;
+    this.root.userData.element = this;
+  }
+
+  /**
+   * Splats are drawn in the transparent pass without writing depth, so overlay
+   * gizmos must be transparent too and come later to stay visible on top.
+   */
+  protected markOverlay(obj: THREE.Object3D, alwaysOnTop = false) {
+    obj.traverse((o) => {
+      o.renderOrder = 10;
+      const mat = (o as THREE.Mesh).material as THREE.Material | undefined;
+      if (mat) {
+        mat.transparent = true;
+        if (alwaysOnTop) mat.depthTest = false;
+      }
+    });
+  }
+
+  /** Line objects that can be picked by clicking near them in screen space. */
+  abstract pickLines(): THREE.Line[];
+
+  setSelected(selected: boolean) {
+    this.selected = selected;
+    this.updateAppearance();
+  }
+
+  setOverlaysVisible(visible: boolean) {
+    this.overlaysVisible = visible;
+    this.updateAppearance();
+  }
+
+  protected abstract updateAppearance(): void;
+
+  dispose() {
+    this.root.removeFromParent();
+    this.root.traverse((o) => {
+      const any = o as THREE.Mesh;
+      any.geometry?.dispose?.();
+      const mat = any.material as THREE.Material | THREE.Material[] | undefined;
+      if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+      else mat?.dispose?.();
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Camera
+// ---------------------------------------------------------------------------
+
+export type CameraType = "pinhole" | "orthographic";
+
+export interface CameraProjection {
+  matrix: THREE.Matrix4;
+  /** The image rectangle inside the viewport, in CSS pixels. */
+  frame: { x: number; y: number; w: number; h: number };
+  isPerspective: boolean;
+}
+
+/**
+ * A scene camera. Uses the three.js convention: looks down local -Z with +Y up.
+ * Pinhole intrinsics follow the OpenCV convention (pixels, origin top-left).
+ */
+export class CameraElement extends SceneElement {
+  readonly kind = "camera" as const;
+  type: CameraType = "pinhole";
+  width = 1920;
+  height = 1080;
+  fx = 1400;
+  fy = 1400;
+  cx = 960;
+  cy = 540;
+  orthoScale = 10;
+  near = 0.05;
+  far = 2000;
+  /** True while the viewport looks through this camera (its own gizmo is hidden). */
+  viewing = false;
+
+  private material = new THREE.LineBasicMaterial({ color: 0xd0d0d0 });
+  private gizmo = new THREE.LineSegments(new THREE.BufferGeometry(), this.material);
+
+  constructor(name: string) {
+    super(name);
+    this.canScale = false;
+    this.root.add(this.gizmo);
+    this.markOverlay(this.gizmo);
+    this.rebuildGizmo();
+  }
+
+  pickLines() {
+    return this.gizmo.visible ? [this.gizmo] : [];
+  }
+
+  protected updateAppearance() {
+    this.material.color.set(this.selected ? SELECT_COLOR : 0xd0d0d0);
+    this.gizmo.visible = this.overlaysVisible && !this.viewing;
+  }
+
+  setViewing(viewing: boolean) {
+    this.viewing = viewing;
+    this.updateAppearance();
+  }
+
+  /** Image size in world units for orthographic cameras (orthoScale spans the larger side, like Blender). */
+  orthoImageSize() {
+    const aspect = this.width / this.height;
+    return aspect >= 1
+      ? { w: this.orthoScale, h: this.orthoScale / aspect }
+      : { w: this.orthoScale * aspect, h: this.orthoScale };
+  }
+
+  rebuildGizmo() {
+    const pts: number[] = [];
+    const seg = (a: number[], b: number[]) => pts.push(...a, ...b);
+    if (this.type === "pinhole") {
+      const d = 0.6;
+      const corner = (u: number, v: number) => [((u - this.cx) / this.fx) * d, (-(v - this.cy) / this.fy) * d, -d];
+      const tl = corner(0, 0), tr = corner(this.width, 0), br = corner(this.width, this.height), bl = corner(0, this.height);
+      const o = [0, 0, 0];
+      seg(o, tl); seg(o, tr); seg(o, br); seg(o, bl);
+      seg(tl, tr); seg(tr, br); seg(br, bl); seg(bl, tl);
+      // "Up" triangle above the top edge, like Blender.
+      const w = tr[0] - tl[0];
+      const midX = (tl[0] + tr[0]) / 2;
+      const a = [midX - w * 0.3, tl[1] + w * 0.05, -d], b = [midX + w * 0.3, tl[1] + w * 0.05, -d], c = [midX, tl[1] + w * 0.3, -d];
+      seg(a, b); seg(b, c); seg(c, a);
+    } else {
+      const { w, h } = this.orthoImageSize();
+      const hw = w / 2, hh = h / 2, d = Math.max(0.5, Math.min(w, h) * 0.15);
+      const rect = (z: number) => {
+        seg([-hw, -hh, z], [hw, -hh, z]); seg([hw, -hh, z], [hw, hh, z]);
+        seg([hw, hh, z], [-hw, hh, z]); seg([-hw, hh, z], [-hw, -hh, z]);
+      };
+      rect(0); rect(-d);
+      seg([-hw, -hh, 0], [-hw, -hh, -d]); seg([hw, -hh, 0], [hw, -hh, -d]);
+      seg([hw, hh, 0], [hw, hh, -d]); seg([-hw, hh, 0], [-hw, hh, -d]);
+      seg([0, 0, 0], [0, 0, -2 * d]);
+      const a = [-hw * 0.3, hh * 1.05, 0], b = [hw * 0.3, hh * 1.05, 0], c = [0, hh + hw * 0.3, 0];
+      seg(a, b); seg(b, c); seg(c, a);
+    }
+    this.gizmo.geometry.dispose();
+    this.gizmo.geometry = new THREE.BufferGeometry();
+    this.gizmo.geometry.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+  }
+
+  /** Fit factor (viewport px per image px) and image rectangle when showing this camera in a viewport. */
+  fit(viewW: number, viewH: number) {
+    const s = Math.min(viewW / this.width, viewH / this.height);
+    const w = this.width * s, h = this.height * s;
+    return { s, frame: { x: (viewW - w) / 2, y: (viewH - h) / 2, w, h } };
+  }
+
+  /** Projection matrix that shows this camera's full image letterboxed inside a viewW x viewH viewport. */
+  projection(viewW: number, viewH: number): CameraProjection {
+    const { s, frame } = this.fit(viewW, viewH);
+    const n = this.near, f = this.far;
+    const m = new THREE.Matrix4();
+    if (this.type === "pinhole") {
+      const fx = this.fx * s, fy = this.fy * s;
+      const cx = this.cx * s + frame.x, cy = this.cy * s + frame.y;
+      m.set(
+        (2 * fx) / viewW, 0, 1 - (2 * cx) / viewW, 0,
+        0, (2 * fy) / viewH, (2 * cy) / viewH - 1, 0,
+        0, 0, -(f + n) / (f - n), (-2 * f * n) / (f - n),
+        0, 0, -1, 0,
+      );
+      return { matrix: m, frame, isPerspective: true };
+    }
+    const img = this.orthoImageSize();
+    const wpp = img.w / frame.w; // world units per viewport pixel
+    const hw = (viewW / 2) * wpp, hh = (viewH / 2) * wpp;
+    m.makeOrthographic(-hw, hw, hh, -hh, n, f);
+    return { matrix: m, frame, isPerspective: false };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gaussian splat scene
+// ---------------------------------------------------------------------------
+
+export type RenderMode = "splat" | "points";
+
+export class SplatElement extends SceneElement {
+  readonly kind = "splat" as const;
+  readonly mesh: SplatMesh;
+  readonly ready: Promise<void>;
+  renderMode: RenderMode = "splat";
+  pointSize = 2;
+  visible = true;
+  loaded = false;
+  loadProgress = 0;
+  numSplats = 0;
+  /** Robust (1st–99th percentile) local bounding box of the splat centers. */
+  readonly bounds = new THREE.Box3(new THREE.Vector3(-1, -1, -1), new THREE.Vector3(1, 1, 1));
+
+  private points: THREE.Points | null = null;
+  private outline = new THREE.LineSegments(
+    new THREE.BufferGeometry(),
+    new THREE.LineBasicMaterial({ color: SELECT_COLOR }),
+  );
+
+  constructor(name: string, bytes: ArrayBuffer, fileName: string, private clipPlanes: THREE.Plane[], onProgress?: () => void) {
+    super(name);
+    this.mesh = new SplatMesh({
+      fileBytes: bytes,
+      fileName,
+      onProgress: (e) => {
+        if (e.lengthComputable) this.loadProgress = e.loaded / e.total;
+        onProgress?.();
+      },
+    });
+    this.root.add(this.mesh);
+    this.outline.visible = false;
+    this.markOverlay(this.outline, true);
+    this.root.add(this.outline);
+    this.ready = this.mesh.initialized.then(() => this.onLoaded());
+  }
+
+  pickLines() {
+    return [];
+  }
+
+  protected updateAppearance() {
+    this.outline.visible = this.selected && this.overlaysVisible && this.loaded;
+  }
+
+  private onLoaded() {
+    this.loaded = true;
+    this.numSplats = this.mesh.numSplats;
+    // Sample centers to compute a bounding box that ignores floaters.
+    const maxSamples = 200_000;
+    const stride = Math.max(1, Math.floor(this.numSplats / maxSamples));
+    const xs: number[] = [], ys: number[] = [], zs: number[] = [];
+    this.mesh.forEachSplat((i, c) => {
+      if (i % stride !== 0) return;
+      xs.push(c.x); ys.push(c.y); zs.push(c.z);
+    });
+    if (xs.length > 0) {
+      const pct = (a: number[], p: number) => {
+        a.sort((u, v) => u - v);
+        return a[Math.min(a.length - 1, Math.max(0, Math.round(p * (a.length - 1))))];
+      };
+      this.bounds.min.set(pct(xs, 0.01), pct(ys, 0.01), pct(zs, 0.01));
+      this.bounds.max.set(pct(xs, 0.99), pct(ys, 0.99), pct(zs, 0.99));
+    }
+    const box = new THREE.Box3Helper(this.bounds);
+    this.outline.geometry.dispose();
+    this.outline.geometry = box.geometry.clone();
+    // Box3Helper encodes a unit cube scaled at render time; bake it.
+    const size = this.bounds.getSize(new THREE.Vector3()).multiplyScalar(0.5);
+    const center = this.bounds.getCenter(new THREE.Vector3());
+    this.outline.geometry.scale(size.x, size.y, size.z);
+    this.outline.geometry.translate(center.x, center.y, center.z);
+    box.dispose();
+    this.updateVisibility();
+    this.updateAppearance();
+  }
+
+  setRenderMode(mode: RenderMode) {
+    this.renderMode = mode;
+    if (mode === "points" && !this.points && this.loaded) this.buildPoints();
+    this.updateVisibility();
+  }
+
+  setPointSize(size: number) {
+    this.pointSize = size;
+    if (this.points) (this.points.material as THREE.PointsMaterial).size = size;
+  }
+
+  setVisible(visible: boolean) {
+    this.visible = visible;
+    this.updateVisibility();
+  }
+
+  private updateVisibility() {
+    this.mesh.visible = this.visible && this.renderMode === "splat";
+    if (this.points) this.points.visible = this.visible && this.renderMode === "points";
+  }
+
+  private buildPoints() {
+    const n = this.mesh.numSplats;
+    const pos = new Float32Array(n * 3);
+    const col = new Float32Array(n * 3);
+    const tmp = new THREE.Color();
+    let k = 0;
+    this.mesh.forEachSplat((_i, c, _s, _q, opacity, color) => {
+      if (opacity < 0.05) return;
+      pos[k * 3] = c.x; pos[k * 3 + 1] = c.y; pos[k * 3 + 2] = c.z;
+      // Splat colors are display (sRGB) values; three expects linear vertex colors.
+      tmp.setRGB(Math.min(1, Math.max(0, color.r)), Math.min(1, Math.max(0, color.g)), Math.min(1, Math.max(0, color.b)), THREE.SRGBColorSpace);
+      col[k * 3] = tmp.r; col[k * 3 + 1] = tmp.g; col[k * 3 + 2] = tmp.b;
+      k++;
+    });
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute("position", new THREE.BufferAttribute(pos.subarray(0, k * 3), 3));
+    geom.setAttribute("color", new THREE.BufferAttribute(col.subarray(0, k * 3), 3));
+    const mat = new THREE.PointsMaterial({
+      size: this.pointSize,
+      sizeAttenuation: false,
+      vertexColors: true,
+      clippingPlanes: this.clipPlanes, // shared array, updated every frame by the editor
+    });
+    this.points = new THREE.Points(geom, mat);
+    this.points.raycast = () => {}; // picking goes through the splat mesh
+    this.root.add(this.points);
+  }
+
+  override dispose() {
+    this.mesh.dispose();
+    super.dispose();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Cut plane
+// ---------------------------------------------------------------------------
+
+export type CutDirection = "+X" | "-X" | "+Y" | "-Y" | "+Z" | "-Z";
+export const CUT_DIRECTIONS: CutDirection[] = ["+X", "-X", "+Y", "-Y", "+Z", "-Z"];
+
+const Z_AXIS = new THREE.Vector3(0, 0, 1);
+
+/**
+ * Removes every gaussian whose mean lies "behind" the plane, i.e. on the side
+ * opposite to the cut direction. With +Y, gaussians with y < plane.y are hidden.
+ */
+export class CutPlaneElement extends SceneElement {
+  readonly kind = "cutplane" as const;
+  direction: CutDirection;
+  size = 10;
+  enabled = true;
+
+  /** Spark SDF: inside (local z < 0) gets opacity 0. Local +Z = cut direction. */
+  readonly sdf = new SplatEditSdf({ type: SplatEditSdfType.PLANE, opacity: 0 });
+  /** three.js clipping plane for the point-cloud render (keeps the positive side). */
+  readonly clipPlane = new THREE.Plane();
+
+  private visual = new THREE.Object3D();
+  private wireMat = new THREE.LineBasicMaterial({ color: 0x7fc8ff, transparent: true, opacity: 0.35 });
+  private borderMat = new THREE.LineBasicMaterial({ color: 0x7fc8ff });
+  private wire = new THREE.LineSegments(new THREE.BufferGeometry(), this.wireMat);
+  private border = new THREE.LineSegments(new THREE.BufferGeometry(), this.borderMat);
+  private arrow: THREE.ArrowHelper;
+
+  constructor(name: string, direction: CutDirection) {
+    super(name);
+    this.direction = direction;
+    this.canRotate = false;
+    this.canScale = false;
+    this.arrow = new THREE.ArrowHelper(Z_AXIS, new THREE.Vector3(), 1, 0xffffff);
+    this.visual.add(this.wire, this.border, this.arrow);
+    this.root.add(this.visual);
+    this.markOverlay(this.visual);
+    this.rebuild();
+  }
+
+  dirVector(out = new THREE.Vector3()) {
+    const axis = "XYZ".indexOf(this.direction[1]);
+    out.set(0, 0, 0).setComponent(axis, this.direction[0] === "+" ? 1 : -1);
+    return out;
+  }
+
+  axisIndex() {
+    return "XYZ".indexOf(this.direction[1]);
+  }
+
+  setDirection(d: CutDirection) {
+    this.direction = d;
+    this.rebuild();
+  }
+
+  setSize(size: number) {
+    this.size = Math.max(0.01, size);
+    this.rebuild();
+  }
+
+  rebuild() {
+    const h = this.size / 2;
+    const div = 10;
+    const pts: number[] = [];
+    for (let i = 1; i < div; i++) {
+      const t = -h + (i / div) * this.size;
+      pts.push(t, -h, 0, t, h, 0, -h, t, 0, h, t, 0);
+    }
+    this.wire.geometry.dispose();
+    this.wire.geometry = new THREE.BufferGeometry();
+    this.wire.geometry.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+    const b = [-h, -h, 0, h, -h, 0, h, -h, 0, h, h, 0, h, h, 0, -h, h, 0, -h, h, 0, -h, -h, 0];
+    this.border.geometry.dispose();
+    this.border.geometry = new THREE.BufferGeometry();
+    this.border.geometry.setAttribute("position", new THREE.Float32BufferAttribute(b, 3));
+
+    const len = Math.max(0.3, this.size * 0.15);
+    this.arrow.setLength(len, len * 0.25, len * 0.12);
+    this.visual.quaternion.setFromUnitVectors(Z_AXIS, this.dirVector());
+    this.updateAppearance();
+  }
+
+  pickLines() {
+    return this.visual.visible ? [this.border, this.arrow.line] : [];
+  }
+
+  protected updateAppearance() {
+    const base = this.enabled ? new THREE.Color(0x7fc8ff) : new THREE.Color(0x777777);
+    this.borderMat.color.copy(this.selected ? SELECT_COLOR : base);
+    this.wireMat.color.copy(this.selected ? SELECT_COLOR : base);
+    this.arrow.setColor(this.selected ? SELECT_COLOR : AXIS_COLORS[this.axisIndex()]);
+    this.visual.visible = this.overlaysVisible;
+  }
+
+  setEnabled(enabled: boolean) {
+    this.enabled = enabled;
+    this.updateAppearance();
+  }
+
+  /** Push the current pose into the Spark SDF and the clipping plane. */
+  syncCut() {
+    this.root.quaternion.identity();
+    this.root.scale.set(1, 1, 1);
+    const n = this.dirVector();
+    this.sdf.position.copy(this.root.position);
+    this.sdf.quaternion.setFromUnitVectors(Z_AXIS, n);
+    this.clipPlane.setFromNormalAndCoplanarPoint(n, this.root.position);
+  }
+
+  /** True if a world-space point is removed by this plane. */
+  cuts(p: THREE.Vector3) {
+    return this.enabled && this.clipPlane.distanceToPoint(p) < 0;
+  }
+}
