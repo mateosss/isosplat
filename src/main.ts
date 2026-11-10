@@ -26,6 +26,7 @@ const main = new View(vp, "main", container, canvas, { frame: $("camera-frame"),
 const minimapEl = $("minimap");
 const mini = new View(vp, "minimap", minimapEl, $("mm-surface"), { frame: $("mm-frame"), label: $("mm-label") }, vp.makeSpark());
 mini.setVisible(false);
+mini.setOverlaysVisible(false); // a clean preview by default (☰ → Overlays to show them)
 
 const transform = new TransformTool(vp, editor, hud);
 const fly = new FlyMode(vp, hud);

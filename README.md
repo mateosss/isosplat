@@ -82,7 +82,7 @@ in their shader.
 - **Minimap** (▣ Minimap, or "Preview in minimap" on a camera): a second, resizable view in the
   corner (drag its top-left corner). It works like the main view (orbit, click to select, G/R/S,
   numpad keys, F, W fly…: keys act on the view under the mouse) with its options in its ☰ menu,
-  including its own overlays toggle and "look from camera". Typical use: keep a clean camera
+  including its own overlays toggle (off by default) and "look from camera". Typical use: keep a clean camera
   preview while editing cuts in the main view.
 - **World** (top of the hierarchy): background color, and an option to render PNGs with a
   transparent background.
