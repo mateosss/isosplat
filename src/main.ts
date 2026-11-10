@@ -102,6 +102,10 @@ $("btn-add-cut").addEventListener("click", () => {
   editor.select(editor.addCutPlane("+Z", vp.controls.target.clone()));
 });
 
+$("btn-add-box").addEventListener("click", () => {
+  editor.select(editor.addCutBox(vp.controls.target.clone()));
+});
+
 $("btn-delete").addEventListener("click", deleteSelected);
 
 function deleteSelected() {

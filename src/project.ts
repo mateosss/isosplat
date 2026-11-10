@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { Editor } from "./editor";
-import { CameraElement, CutPlaneElement, SceneElement, SplatElement } from "./elements";
+import { CameraElement, CutBoxElement, CutPlaneElement, SceneElement, SplatElement } from "./elements";
 import type { ViewState } from "./viewport";
 
 /*
@@ -51,7 +51,11 @@ type CutJson = ElementJsonBase & {
   size?: number;
   enabled: boolean;
 };
-type ElementJson = CameraJson | SplatJson | CutJson;
+type CutBoxJson = ElementJsonBase & {
+  kind: "cutbox";
+  enabled: boolean;
+};
+type ElementJson = CameraJson | SplatJson | CutJson | CutBoxJson;
 
 export interface ProjectJson {
   format: "isosplat";
@@ -87,6 +91,7 @@ export function buildProject(editor: Editor, view: ViewState): { blob: Blob; jso
         renderMode: e.renderMode, pointSize: e.pointSize, visible: e.visible, data,
       };
     }
+    if (e instanceof CutBoxElement) return { kind: "cutbox", ...base(e), enabled: e.enabled };
     const c = e as CutPlaneElement;
     return { kind: "cutplane", ...base(c), direction: c.direction, extent: c.extent.toArray(), enabled: c.enabled };
   });
@@ -157,6 +162,11 @@ export async function applyProject(editor: Editor, file: Blob) {
       cut.setScale(j.extent ? new THREE.Vector3().fromArray(j.extent) : new THREE.Vector3(size, size, size));
       cut.setEnabled(j.enabled);
       created.push(cut);
+    } else if (j.kind === "cutbox") {
+      const box = editor.addCutBox();
+      applyPose(box, j);
+      box.setEnabled(j.enabled);
+      created.push(box);
     } else if (j.kind === "splat") {
       // Keep the hierarchy order: reserve the slot, the element is added when its bytes are read.
       const index = created.length;

@@ -1,10 +1,11 @@
 import { Editor } from "../editor";
-import { CutPlaneElement, type ElementKind, SceneElement, SplatElement } from "../elements";
+import { CutBoxElement, CutPlaneElement, type ElementKind, SceneElement, SplatElement } from "../elements";
 
 const GROUPS: { kind: ElementKind; title: string; badge: string }[] = [
   { kind: "camera", title: "Cameras", badge: "CAM" },
   { kind: "splat", title: "3DGS scenes", badge: "3DGS" },
   { kind: "cutplane", title: "Cut-planes", badge: "CUT" },
+  { kind: "cutbox", title: "Cut-boxes", badge: "BOX" },
 ];
 
 export class HierarchyPanel {
@@ -73,6 +74,8 @@ export class HierarchyPanel {
       row.classList.toggle("disabled", !el.visible);
     } else if (el instanceof CutPlaneElement) {
       meta.textContent = el.direction;
+      row.classList.toggle("disabled", !el.enabled);
+    } else if (el instanceof CutBoxElement) {
       row.classList.toggle("disabled", !el.enabled);
     }
     row.append(badge, name, meta);

@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { SplatEdit, SplatEditRgbaBlendMode } from "@sparkjsdev/spark";
-import { CameraElement, CutElement, CutPlaneElement, type CutDirection, SceneElement, SplatElement } from "./elements";
+import { CameraElement, CutBoxElement, CutElement, CutPlaneElement, type CutDirection, SceneElement, SplatElement } from "./elements";
 import { MAX_POINT_CUTS, pointCutUniforms } from "./cuts";
 
 type EventName = "elements" | "selection" | "props";
@@ -110,6 +110,14 @@ export class Editor {
     return this.add(el);
   }
 
+  /** A cut-box (2 m cube by default) that removes every gaussian inside it. */
+  addCutBox(position = new THREE.Vector3(), size = 2) {
+    const el = new CutBoxElement(this.uniqueName("Cut-box"));
+    el.root.position.copy(position);
+    el.root.scale.setScalar(size);
+    return this.add(el);
+  }
+
   async importSplat(file: File) {
     return this.importSplatBlob(file, file.name);
   }
@@ -149,6 +157,10 @@ export class Editor {
   /** All cut elements (planes and boxes). */
   cuts() {
     return this.elements.filter((e): e is CutElement => e instanceof CutElement);
+  }
+
+  cutBoxes() {
+    return this.elements.filter((e): e is CutBoxElement => e instanceof CutBoxElement);
   }
 
   cutPlanes() {

@@ -181,6 +181,7 @@ button:disabled { opacity: 0.4; cursor: default; }
 .badge.camera { background: #4a5a7a; }
 .badge.splat { background: #5a7a4a; }
 .badge.cutplane { background: #7a4a6a; }
+.badge.cutbox { background: #8a3f78; }
 .h-item .meta { margin-left: auto; color: var(--muted); font-size: 11px; }
 .h-item.disabled .name { opacity: 0.5; text-decoration: line-through; }
 

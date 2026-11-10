@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { Editor } from "../editor";
-import { AXIS_LETTERS, CameraElement, CUT_DIRECTIONS, CutPlaneElement, SceneElement, SplatElement } from "../elements";
+import { AXIS_LETTERS, CameraElement, CutBoxElement, CUT_DIRECTIONS, CutPlaneElement, SceneElement, SplatElement } from "../elements";
 import { Viewport } from "../viewport";
 
 type Binding = { sync: () => void };
@@ -49,6 +49,7 @@ export class PropertiesPanel {
     if (el instanceof CameraElement) this.cameraSection(el);
     if (el instanceof SplatElement) this.splatSection(el);
     if (el instanceof CutPlaneElement) this.cutSection(el);
+    if (el instanceof CutBoxElement) this.cutBoxSection(el);
   }
 
   // ----------------------------------------------------------- sections
@@ -249,6 +250,15 @@ export class PropertiesPanel {
       `Hides gaussians with ${axis} ${op} plane ${axis} whose ${u} and ${v} fall inside the rectangle ` +
       `(resize with S, constrain with ${u.toUpperCase()}/${v.toUpperCase()}). The arrow points to the side that is kept.`,
     ));
+  }
+
+  private cutBoxSection(box: CutBoxElement) {
+    const s = this.section("Cut-box");
+    s.append(this.row("Enabled", this.checkbox(() => box.enabled, (v) => {
+      box.setEnabled(v);
+      this.editor.emit("props");
+    })));
+    s.append(this.note("Hides every gaussian inside the box. Its scale is its size in meters; move, rotate and scale it with G / R / S."));
   }
 
   // ----------------------------------------------------------- widgets

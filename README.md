@@ -74,6 +74,8 @@ in their shader.
 - **Render PNG** (toolbar, camera properties, or World properties) renders a clean image without
   overlays, splats sorted for the render camera, with 2× supersampling. From a camera it uses the
   camera's resolution; from the free view it uses the viewport's pixel size.
+- **Cuts**: cut-planes (+ Cut) remove what is behind them within their rectangle (resize with S);
+  cut-boxes (+ Box) remove everything inside them (move / rotate / scale with G / R / S).
 - **World** (top of the hierarchy): background color, and an option to render PNGs with a
   transparent background.
 - **Depth view** colors gaussians and point clouds by their depth along the camera's view axis with

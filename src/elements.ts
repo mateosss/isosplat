@@ -539,3 +539,63 @@ export class CutPlaneElement extends CutElement {
     half.set(this.extent.getComponent(iu) / 2, this.extent.getComponent(iv) / 2, CUT_PLANE_DEPTH / 2);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Cut box
+// ---------------------------------------------------------------------------
+
+const BOX_COLOR = new THREE.Color(0xff7ad9);
+
+/**
+ * Removes every gaussian inside the box. The box is a unit cube transformed by
+ * the element's pose, so its size in meters is its scale (G/R/S all apply).
+ */
+export class CutBoxElement extends CutElement {
+  readonly kind = "cutbox" as const;
+  private edgeMat = new THREE.LineBasicMaterial({ color: BOX_COLOR });
+  private faceMat = new THREE.LineBasicMaterial({ color: BOX_COLOR, transparent: true, opacity: 0.3 });
+  private edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), this.edgeMat);
+  /** Face diagonals, so the box reads as a solid region and not just a frame. */
+  private faces: THREE.LineSegments;
+
+  constructor(name: string) {
+    super(name);
+    const d: number[] = [];
+    for (let axis = 0; axis < 3; axis++) {
+      for (const side of [-0.5, 0.5]) {
+        const a = (axis + 1) % 3, b = (axis + 2) % 3;
+        const p = (u: number, v: number) => {
+          const v3 = [0, 0, 0];
+          v3[axis] = side; v3[a] = u; v3[b] = v;
+          return v3;
+        };
+        d.push(...p(-0.5, -0.5), ...p(0.5, 0.5), ...p(-0.5, 0.5), ...p(0.5, -0.5));
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(d, 3));
+    this.faces = new THREE.LineSegments(g, this.faceMat);
+    this.root.add(this.edges, this.faces);
+    this.markOverlay(this.edges);
+    this.markOverlay(this.faces);
+    this.updateAppearance();
+  }
+
+  pickLines() {
+    return this.edges.visible ? [this.edges] : [];
+  }
+
+  protected updateAppearance() {
+    const base = this.enabled ? BOX_COLOR : new THREE.Color(0x777777);
+    this.edgeMat.color.copy(this.selected ? SELECT_COLOR : base);
+    this.faceMat.color.copy(this.selected ? SELECT_COLOR : base);
+    this.edges.visible = this.faces.visible = this.overlaysVisible;
+  }
+
+  protected computeBox(center: THREE.Vector3, quat: THREE.Quaternion, half: THREE.Vector3) {
+    this.root.updateMatrixWorld();
+    center.copy(this.root.position);
+    quat.copy(this.root.quaternion);
+    half.copy(this.root.scale).multiplyScalar(0.5);
+  }
+}
