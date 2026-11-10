@@ -1,11 +1,12 @@
 import * as THREE from "three";
 import { SplatEditSdf, SplatEditSdfType, SplatMesh } from "@sparkjsdev/spark";
-import { addPointDepthView, setSplatDepthView } from "./depth";
+import { patchPointDepthShader, setSplatDepthView } from "./depth";
+import { patchPointCutShader } from "./cuts";
 
 export const SELECT_COLOR = new THREE.Color(0xff8c1a);
 export const AXIS_COLORS = [new THREE.Color(0xff3352), new THREE.Color(0x8bdc00), new THREE.Color(0x2890ff)];
 
-export type ElementKind = "camera" | "splat" | "cutplane";
+export type ElementKind = "camera" | "splat" | "cutplane" | "cutbox";
 
 let nextId = 1;
 
@@ -57,6 +58,15 @@ export abstract class SceneElement {
   }
 
   protected abstract updateAppearance(): void;
+
+  /** Scale as edited by the S tool and the properties panel (elements may map it to their own size). */
+  getScale(out = new THREE.Vector3()) {
+    return out.copy(this.root.scale);
+  }
+
+  setScale(s: THREE.Vector3) {
+    this.root.scale.copy(s);
+  }
 
   dispose() {
     this.root.removeFromParent();
@@ -218,6 +228,8 @@ export class SplatElement extends SceneElement {
   numSplats = 0;
   /** Gaussians currently colored by depth (see depth.ts). */
   depthView = false;
+  /** Up to ~20k local-space splat centers (xyz triplets), used for the automatic depth range. */
+  samples = new Float32Array(0);
   /** Robust (1st–99th percentile) local bounding box of the splat centers. */
   readonly bounds = new THREE.Box3(new THREE.Vector3(-1, -1, -1), new THREE.Vector3(1, 1, 1));
 
@@ -234,7 +246,6 @@ export class SplatElement extends SceneElement {
     readonly fileName: string,
     /** The original file bytes (disk-backed Blob), embedded when saving a project. */
     public source: Blob,
-    private clipPlanes: THREE.Plane[],
     onProgress?: () => void,
   ) {
     super(name);
@@ -268,10 +279,14 @@ export class SplatElement extends SceneElement {
     const maxSamples = 200_000;
     const stride = Math.max(1, Math.floor(this.numSplats / maxSamples));
     const xs: number[] = [], ys: number[] = [], zs: number[] = [];
-    this.mesh.forEachSplat((i, c) => {
+    const sampleStride = Math.max(1, Math.floor(this.numSplats / 20_000));
+    const samples: number[] = [];
+    this.mesh.forEachSplat((i, c, _s, _q, opacity) => {
+      if (i % sampleStride === 0 && opacity > 0.1) samples.push(c.x, c.y, c.z);
       if (i % stride !== 0) return;
       xs.push(c.x); ys.push(c.y); zs.push(c.z);
     });
+    this.samples = Float32Array.from(samples);
     if (xs.length > 0) {
       const pct = (a: number[], p: number) => {
         a.sort((u, v) => u - v);
@@ -336,13 +351,12 @@ export class SplatElement extends SceneElement {
     const geom = new THREE.BufferGeometry();
     geom.setAttribute("position", new THREE.BufferAttribute(pos.subarray(0, k * 3), 3));
     geom.setAttribute("color", new THREE.BufferAttribute(col.subarray(0, k * 3), 3));
-    const mat = new THREE.PointsMaterial({
-      size: this.pointSize,
-      sizeAttenuation: false,
-      vertexColors: true,
-      clippingPlanes: this.clipPlanes, // shared array, updated every frame by the editor
-    });
-    addPointDepthView(mat);
+    const mat = new THREE.PointsMaterial({ size: this.pointSize, sizeAttenuation: false, vertexColors: true });
+    // Shared uniforms (see cuts.ts / depth.ts) drive cuts and depth coloring.
+    mat.onBeforeCompile = (shader) => {
+      patchPointCutShader(shader);
+      patchPointDepthShader(shader);
+    };
     this.points = new THREE.Points(geom, mat);
     this.points.raycast = () => {}; // picking goes through the splat mesh
     this.root.add(this.points);
@@ -355,28 +369,71 @@ export class SplatElement extends SceneElement {
 }
 
 // ---------------------------------------------------------------------------
+// Cuts
+// ---------------------------------------------------------------------------
+
+const Z_AXIS = new THREE.Vector3(0, 0, 1);
+/** How far a cut-plane's removal region extends behind the plane (meters). */
+const CUT_PLANE_DEPTH = 1000;
+
+/**
+ * Base for elements that remove gaussians: each describes an oriented box
+ * (center, rotation, half extents). Everything inside an enabled box is hidden,
+ * for gaussians (Spark BOX SDF, opacity 0) and point clouds (shader test).
+ */
+export abstract class CutElement extends SceneElement {
+  enabled = true;
+  readonly sdf = new SplatEditSdf({ type: SplatEditSdfType.BOX, opacity: 0 });
+  /** World -> box-local transform and half extents of the removal box (updated by syncCut). */
+  readonly inverse = new THREE.Matrix4();
+  readonly half = new THREE.Vector3();
+
+  protected abstract computeBox(center: THREE.Vector3, quat: THREE.Quaternion, half: THREE.Vector3): void;
+
+  setEnabled(enabled: boolean) {
+    this.enabled = enabled;
+    this.updateAppearance();
+  }
+
+  /** Push the current pose into the Spark SDF and the point-cloud box. */
+  syncCut() {
+    const center = new THREE.Vector3(), quat = new THREE.Quaternion();
+    this.computeBox(center, quat, this.half);
+    this.half.set(Math.abs(this.half.x), Math.abs(this.half.y), Math.abs(this.half.z));
+    this.sdf.position.copy(center);
+    this.sdf.quaternion.copy(quat);
+    this.sdf.scale.copy(this.half); // Spark reads the box half extents from the SDF's scale
+    this.inverse.compose(center, quat, new THREE.Vector3(1, 1, 1)).invert();
+  }
+
+  /** True if a world-space point is removed by this cut (call syncCut first). */
+  cuts(p: THREE.Vector3) {
+    if (!this.enabled) return false;
+    const l = p.clone().applyMatrix4(this.inverse);
+    return Math.abs(l.x) <= this.half.x && Math.abs(l.y) <= this.half.y && Math.abs(l.z) <= this.half.z;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Cut plane
 // ---------------------------------------------------------------------------
 
 export type CutDirection = "+X" | "-X" | "+Y" | "-Y" | "+Z" | "-Z";
 export const CUT_DIRECTIONS: CutDirection[] = ["+X", "-X", "+Y", "-Y", "+Z", "-Z"];
-
-const Z_AXIS = new THREE.Vector3(0, 0, 1);
+export const AXIS_LETTERS = ["x", "y", "z"] as const;
 
 /**
- * Removes every gaussian whose mean lies "behind" the plane, i.e. on the side
- * opposite to the cut direction. With +Y, gaussians with y < plane.y are hidden.
+ * A bounded cut-plane: removes the gaussians behind the plane (opposite to the cut
+ * direction) that also fall inside the plane's rectangle. With +Y, gaussians with
+ * y < plane.y whose x/z are within the rectangle are hidden.
+ * The rectangle is sized along the two world axes in the plane (`extent`, also
+ * editable with the S tool); the extent along the normal axis is unused.
  */
-export class CutPlaneElement extends SceneElement {
+export class CutPlaneElement extends CutElement {
   readonly kind = "cutplane" as const;
   direction: CutDirection;
-  size = 10;
-  enabled = true;
-
-  /** Spark SDF: inside (local z < 0) gets opacity 0. Local +Z = cut direction. */
-  readonly sdf = new SplatEditSdf({ type: SplatEditSdfType.PLANE, opacity: 0 });
-  /** three.js clipping plane for the point-cloud render (keeps the positive side). */
-  readonly clipPlane = new THREE.Plane();
+  /** Rectangle size along each world axis (the normal axis component is ignored). */
+  readonly extent = new THREE.Vector3(10, 10, 10);
 
   private visual = new THREE.Object3D();
   private wireMat = new THREE.LineBasicMaterial({ color: 0x7fc8ff, transparent: true, opacity: 0.35 });
@@ -389,7 +446,6 @@ export class CutPlaneElement extends SceneElement {
     super(name);
     this.direction = direction;
     this.canRotate = false;
-    this.canScale = false;
     this.arrow = new THREE.ArrowHelper(Z_AXIS, new THREE.Vector3(), 1, 0xffffff);
     this.visual.add(this.wire, this.border, this.arrow);
     this.root.add(this.visual);
@@ -398,8 +454,7 @@ export class CutPlaneElement extends SceneElement {
   }
 
   dirVector(out = new THREE.Vector3()) {
-    const axis = "XYZ".indexOf(this.direction[1]);
-    out.set(0, 0, 0).setComponent(axis, this.direction[0] === "+" ? 1 : -1);
+    out.set(0, 0, 0).setComponent(this.axisIndex(), this.direction[0] === "+" ? 1 : -1);
     return out;
   }
 
@@ -407,35 +462,58 @@ export class CutPlaneElement extends SceneElement {
     return "XYZ".indexOf(this.direction[1]);
   }
 
+  /** The two in-plane world axes (u, v) and a right-handed rotation whose local x/y/z = u/v/normal. */
+  basis() {
+    const k = this.axisIndex();
+    const iu = (k + 1) % 3, iv = (k + 2) % 3;
+    const n = this.dirVector();
+    const eu = new THREE.Vector3().setComponent(iu, 1);
+    const ev = new THREE.Vector3().setComponent(iv, 1);
+    if (new THREE.Vector3().crossVectors(eu, ev).dot(n) < 0) ev.negate();
+    const quat = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(eu, ev, n));
+    return { iu, iv, n, quat };
+  }
+
   setDirection(d: CutDirection) {
     this.direction = d;
     this.rebuild();
   }
 
-  setSize(size: number) {
-    this.size = Math.max(0.01, size);
+  /** Set the rectangle size along a world axis. */
+  setExtent(axis: number, size: number) {
+    this.extent.setComponent(axis, Math.max(0.01, Math.abs(size)));
+    this.rebuild();
+  }
+
+  override getScale(out = new THREE.Vector3()) {
+    return out.copy(this.extent);
+  }
+
+  override setScale(s: THREE.Vector3) {
+    this.extent.set(Math.max(0.01, Math.abs(s.x)), Math.max(0.01, Math.abs(s.y)), Math.max(0.01, Math.abs(s.z)));
     this.rebuild();
   }
 
   rebuild() {
-    const h = this.size / 2;
+    const { iu, iv, quat } = this.basis();
+    const hu = this.extent.getComponent(iu) / 2, hv = this.extent.getComponent(iv) / 2;
     const div = 10;
     const pts: number[] = [];
     for (let i = 1; i < div; i++) {
-      const t = -h + (i / div) * this.size;
-      pts.push(t, -h, 0, t, h, 0, -h, t, 0, h, t, 0);
+      const tu = -hu + (i / div) * 2 * hu, tv = -hv + (i / div) * 2 * hv;
+      pts.push(tu, -hv, 0, tu, hv, 0, -hu, tv, 0, hu, tv, 0);
     }
     this.wire.geometry.dispose();
     this.wire.geometry = new THREE.BufferGeometry();
     this.wire.geometry.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
-    const b = [-h, -h, 0, h, -h, 0, h, -h, 0, h, h, 0, h, h, 0, -h, h, 0, -h, h, 0, -h, -h, 0];
+    const b = [-hu, -hv, 0, hu, -hv, 0, hu, -hv, 0, hu, hv, 0, hu, hv, 0, -hu, hv, 0, -hu, hv, 0, -hu, -hv, 0];
     this.border.geometry.dispose();
     this.border.geometry = new THREE.BufferGeometry();
     this.border.geometry.setAttribute("position", new THREE.Float32BufferAttribute(b, 3));
 
-    const len = Math.max(0.3, this.size * 0.15);
+    const len = THREE.MathUtils.clamp(Math.min(hu, hv) * 0.3, 0.3, 3);
     this.arrow.setLength(len, len * 0.25, len * 0.12);
-    this.visual.quaternion.setFromUnitVectors(Z_AXIS, this.dirVector());
+    this.visual.quaternion.copy(quat);
     this.updateAppearance();
   }
 
@@ -451,23 +529,13 @@ export class CutPlaneElement extends SceneElement {
     this.visual.visible = this.overlaysVisible;
   }
 
-  setEnabled(enabled: boolean) {
-    this.enabled = enabled;
-    this.updateAppearance();
-  }
-
-  /** Push the current pose into the Spark SDF and the clipping plane. */
-  syncCut() {
+  /** Removal region: the rectangle extruded CUT_PLANE_DEPTH meters behind the plane. */
+  protected computeBox(center: THREE.Vector3, quat: THREE.Quaternion, half: THREE.Vector3) {
     this.root.quaternion.identity();
     this.root.scale.set(1, 1, 1);
-    const n = this.dirVector();
-    this.sdf.position.copy(this.root.position);
-    this.sdf.quaternion.setFromUnitVectors(Z_AXIS, n);
-    this.clipPlane.setFromNormalAndCoplanarPoint(n, this.root.position);
-  }
-
-  /** True if a world-space point is removed by this plane. */
-  cuts(p: THREE.Vector3) {
-    return this.enabled && this.clipPlane.distanceToPoint(p) < 0;
+    const { iu, iv, n, quat: q } = this.basis();
+    center.copy(this.root.position).addScaledVector(n, -CUT_PLANE_DEPTH / 2);
+    quat.copy(q);
+    half.set(this.extent.getComponent(iu) / 2, this.extent.getComponent(iv) / 2, CUT_PLANE_DEPTH / 2);
   }
 }

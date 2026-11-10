@@ -75,9 +75,9 @@ export function setSplatDepthView(mesh: SplatMesh, on: boolean) {
 
 // ---------------------------------------------------------------- point clouds (three.js)
 
-/** Patch a PointsMaterial so it can color points by depth (toggled by the shared uniforms). */
-export function addPointDepthView(material: THREE.PointsMaterial) {
-  material.onBeforeCompile = (shader) => {
+/** Inject depth coloring into a PointsMaterial shader (toggled by the shared uniforms). */
+export function patchPointDepthShader(shader: THREE.WebGLProgramParametersWithUniforms) {
+  {
     Object.assign(shader.uniforms, pointDepthUniforms);
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nvarying float vViewDepth;")
@@ -96,40 +96,37 @@ export function addPointDepthView(material: THREE.PointsMaterial) {
           diffuseColor.rgb = sRGBTransferEOTF(vec4(${JET_GLSL}, 1.0)).rgb;
         }`,
       );
-  };
+  }
 }
 
 // ---------------------------------------------------------------- automatic range
 
 /**
- * Depth range covering what is actually visible: each splat's robust bounding box,
- * clipped by the enabled cut-planes, measured along the camera's view axis.
+ * Depth range covering what is actually visible: a sample of each splat's centers,
+ * minus the ones removed by cuts, measured along the camera's view axis
+ * (1st–99th percentile, so floaters don't stretch the colormap).
  */
 export function autoDepthRange(editor: Editor, camera: THREE.Camera): { min: number; max: number } | null {
   camera.updateMatrixWorld();
-  const view = camera.matrixWorldInverse;
-  let min = Infinity, max = -Infinity;
-  const corner = new THREE.Vector3();
+  const toView = camera.matrixWorldInverse;
+  const depths: number[] = [];
+  const p = new THREE.Vector3();
   for (const s of editor.splats()) {
     if (!s.loaded || !s.visible) continue;
-    const box = s.bounds.clone().applyMatrix4(s.root.matrixWorld);
-    for (const c of editor.cutPlanes()) {
-      if (!c.enabled) continue;
-      const axis = c.axisIndex();
-      const p = c.root.position.getComponent(axis);
-      if (c.direction[0] === "+") box.min.setComponent(axis, Math.max(box.min.getComponent(axis), p));
-      else box.max.setComponent(axis, Math.min(box.max.getComponent(axis), p));
-    }
-    if (box.isEmpty()) continue;
-    for (let i = 0; i < 8; i++) {
-      corner.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z);
-      const d = -corner.applyMatrix4(view).z;
-      min = Math.min(min, d);
-      max = Math.max(max, d);
+    s.root.updateMatrixWorld();
+    const m = s.root.matrixWorld;
+    const smp = s.samples;
+    for (let i = 0; i < smp.length; i += 3) {
+      p.set(smp[i], smp[i + 1], smp[i + 2]).applyMatrix4(m);
+      if (editor.isCut(p)) continue;
+      depths.push(-p.applyMatrix4(toView).z);
     }
   }
-  if (!Number.isFinite(min)) return null;
-  return { min: Math.max(0, min), max: Math.max(max, Math.max(0, min) + 1e-3) };
+  if (depths.length === 0) return null;
+  const sorted = Float64Array.from(depths).sort();
+  const at = (q: number) => sorted[Math.min(sorted.length - 1, Math.round(q * (sorted.length - 1)))];
+  const min = Math.max(0, at(0.01));
+  return { min, max: Math.max(at(0.99), min + 1e-3) };
 }
 
 /**

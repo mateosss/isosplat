@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { SplatEdit, SplatEditRgbaBlendMode } from "@sparkjsdev/spark";
-import { CameraElement, CutPlaneElement, type CutDirection, SceneElement, SplatElement } from "./elements";
+import { CameraElement, CutElement, CutPlaneElement, type CutDirection, SceneElement, SplatElement } from "./elements";
+import { MAX_POINT_CUTS, pointCutUniforms } from "./cuts";
 
 type EventName = "elements" | "selection" | "props";
 type Listener = () => void;
@@ -25,9 +26,7 @@ export class Editor {
     depthMax: 20,
   };
 
-  /** Clipping planes shared by all point-cloud materials (mutated in place). */
-  readonly clipPlanes: THREE.Plane[] = [];
-  /** One global Spark edit; its SDFs are the enabled cut-planes. Applies to every SplatMesh. */
+  /** One global Spark edit; its SDFs are the enabled cuts (union). Applies to every SplatMesh. */
   private cutEdit = new SplatEdit({ rgbaBlendMode: SplatEditRgbaBlendMode.MULTIPLY, sdfs: [] });
   private listeners = new Map<EventName, Set<Listener>>();
 
@@ -119,7 +118,7 @@ export class Editor {
   async importSplatBlob(source: Blob, fileName: string, setup?: (el: SplatElement) => void) {
     const bytes = await source.arrayBuffer();
     const name = this.uniqueName(fileName.replace(/\.[^.]+$/, ""));
-    const el = new SplatElement(name, bytes, fileName, source, this.clipPlanes, () => this.emit("elements"));
+    const el = new SplatElement(name, bytes, fileName, source, () => this.emit("elements"));
     setup?.(el);
     this.add(el);
     try {
@@ -144,7 +143,12 @@ export class Editor {
       ["+Z", new THREE.Vector3(0, 0, -h)],
       ["-Z", new THREE.Vector3(0, 0, h)],
     ];
-    for (const [d, p] of defs) this.addCutPlane(d, p).setSize(size);
+    for (const [d, p] of defs) this.addCutPlane(d, p).setScale(new THREE.Vector3(size, size, size));
+  }
+
+  /** All cut elements (planes and boxes). */
+  cuts() {
+    return this.elements.filter((e): e is CutElement => e instanceof CutElement);
   }
 
   cutPlanes() {
@@ -159,18 +163,22 @@ export class Editor {
     return this.elements.filter((e): e is CameraElement => e instanceof CameraElement);
   }
 
-  /** Called every frame: sync cut-plane poses into the Spark edit and the clipping planes. */
+  /** Called every frame: sync cut poses into the Spark edit and the point-cloud uniforms. */
   updateCuts() {
-    const enabled = this.cutPlanes().filter((c) => c.enabled);
+    const enabled = this.cuts().filter((c) => c.enabled);
     enabled.forEach((c) => c.syncCut());
     const sdfs = enabled.map((c) => c.sdf);
     const prev = this.cutEdit.sdfs ?? [];
     if (prev.length !== sdfs.length || prev.some((s, i) => s !== sdfs[i])) this.cutEdit.sdfs = sdfs;
-    this.clipPlanes.length = 0;
-    enabled.forEach((c) => this.clipPlanes.push(c.clipPlane));
+    const n = Math.min(enabled.length, MAX_POINT_CUTS);
+    pointCutUniforms.uCutCount.value = n;
+    for (let i = 0; i < n; i++) {
+      pointCutUniforms.uCutInv.value[i].copy(enabled[i].inverse);
+      pointCutUniforms.uCutHalf.value[i].copy(enabled[i].half);
+    }
   }
 
   isCut(worldPoint: THREE.Vector3) {
-    return this.cutPlanes().some((c) => c.cuts(worldPoint));
+    return this.cuts().some((c) => c.cuts(worldPoint));
   }
 }

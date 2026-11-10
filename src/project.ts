@@ -45,7 +45,10 @@ type SplatJson = ElementJsonBase & {
 type CutJson = ElementJsonBase & {
   kind: "cutplane";
   direction: CutPlaneElement["direction"];
-  size: number;
+  /** Rectangle size along each world axis (the normal axis is ignored). */
+  extent?: number[];
+  /** Older projects: square planes of this size. */
+  size?: number;
   enabled: boolean;
 };
 type ElementJson = CameraJson | SplatJson | CutJson;
@@ -85,7 +88,7 @@ export function buildProject(editor: Editor, view: ViewState): { blob: Blob; jso
       };
     }
     const c = e as CutPlaneElement;
-    return { kind: "cutplane", ...base(c), direction: c.direction, size: c.size, enabled: c.enabled };
+    return { kind: "cutplane", ...base(c), direction: c.direction, extent: c.extent.toArray(), enabled: c.enabled };
   });
   const json: ProjectJson = {
     format: "isosplat",
@@ -150,7 +153,8 @@ export async function applyProject(editor: Editor, file: Blob) {
     } else if (j.kind === "cutplane") {
       const cut = editor.addCutPlane(j.direction, new THREE.Vector3().fromArray(j.position));
       applyPose(cut, j);
-      cut.setSize(j.size);
+      const size = j.size ?? 10;
+      cut.setScale(j.extent ? new THREE.Vector3().fromArray(j.extent) : new THREE.Vector3(size, size, size));
       cut.setEnabled(j.enabled);
       created.push(cut);
     } else if (j.kind === "splat") {

@@ -38,13 +38,13 @@ export class TransformTool {
     const el = this.editor.selected;
     if (!el) return;
     if (mode === "R" && !el.canRotate) return toast(`${el.kind === "cutplane" ? "Cut-planes" : "This element"} can't be rotated`);
-    if (mode === "S" && !el.canScale) return toast(`${el.kind === "cutplane" ? "Cut-planes" : "Cameras"} can't be scaled`);
+    if (mode === "S" && !el.canScale) return toast("Cameras can't be scaled");
     this.vp.unlock();
     if (!this.active) {
       this.el = el;
       this.startPos.copy(el.root.position);
       this.startQuat.copy(el.root.quaternion);
-      this.startScale.copy(el.root.scale);
+      this.startScale.copy(el.getScale());
       this.constraint = null;
     } else {
       this.restore();
@@ -126,7 +126,7 @@ export class TransformTool {
     if (!this.el) return;
     this.el.root.position.copy(this.startPos);
     this.el.root.quaternion.copy(this.startQuat);
-    this.el.root.scale.copy(this.startScale);
+    this.el.setScale(this.startScale);
   }
 
   private cycleConstraint(axis: number) {
@@ -234,9 +234,9 @@ export class TransformTool {
       const s = this.startScale.clone();
       if (this.constraint) s.setComponent(this.constraint.axis, s.getComponent(this.constraint.axis) * factor);
       else s.multiplyScalar(factor);
-      el.root.scale.copy(s);
+      el.setScale(s);
       info = `×${factor.toFixed(3)}`;
-      if (this.constraint?.space === "global") info += " (scale is always applied on local axes)";
+      if (this.constraint?.space === "global" && el.kind !== "cutplane") info += " (scale is always applied on local axes)";
     }
 
     const numText = this.numeric ? `  [${this.numeric}]` : "";

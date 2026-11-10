@@ -291,6 +291,14 @@ container.addEventListener(
       downPos = null;
       return;
     }
+    // Left click in the 3D view leaves WASD fly mode (toolbar buttons keep working normally).
+    if (fly.active && e.button === 0 && e.target === vp.canvas) {
+      e.stopPropagation();
+      e.preventDefault();
+      fly.exit();
+      downPos = null;
+      return;
+    }
     downPos = e.button === 0 && !fly.active ? localMouse(e) : null;
   },
   { capture: true },
@@ -371,6 +379,10 @@ window.addEventListener("keydown", (e) => {
     if (!mouseInViewport) return;
     e.preventDefault();
     transform.begin(key.toUpperCase() as TransformMode, mouse);
+  } else if (key === "w") {
+    if (!mouseInViewport) return;
+    e.preventDefault();
+    fly.enter();
   } else if (key === "z") {
     setDepthView(!editor.world.depthView);
   } else if (e.key === "Delete") {

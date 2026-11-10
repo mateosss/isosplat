@@ -29,8 +29,10 @@ One-time setup: in the repository settings, **Pages → Source: GitHub Actions**
 The site is fully static and uses relative asset paths, so it works at `https://<user>.github.io/<repo>/`.
 
 Built with [three.js](https://threejs.org) and [Spark](https://sparkjs.dev) (3DGS renderer).
-Cut-planes are implemented as a global Spark `SplatEdit` (one PLANE SDF per enabled cut-plane,
-opacity 0) for gaussians, and as three.js clipping planes for the point-cloud render.
+Every cut is an oriented box: a cut-plane removes the gaussians behind it that fall inside its
+rectangle (the rectangle extruded backwards), a cut-box removes what is inside it. Gaussians use a
+global Spark `SplatEdit` (one BOX SDF per enabled cut, opacity 0); point clouds run the same box test
+in their shader.
 
 ## Conventions
 
@@ -61,7 +63,7 @@ opacity 0) for gaussians, and as three.js clipping planes for the point-cloud re
 | Z / ◐ Depth button | toggle depth view (jet colormap) |
 | Ctrl+S / Ctrl+Shift+S / Ctrl+O | save project / save as / open project |
 | Number fields | click to type, drag horizontally to scrub (Shift fine, Ctrl snap, Esc restore) |
-| WASD button | fly mode: WASD move, mouse look, Q/E down/up, Shift faster, wheel = base speed, Esc exits |
+| W / WASD button | fly mode: WASD move, mouse look, Q/E down/up, Shift faster, wheel = base speed, Esc or left click exits |
 
 ## Projects, rendering and world
 

@@ -106,7 +106,7 @@ export class FlyMode {
   private updateHud() {
     this.hud.textContent =
       `WASD fly · speed ${this.speed.toFixed(2)} m/s (wheel to change, Shift ×4)\n` +
-      `Q/E down/up · Esc to exit`;
+      `Q/E down/up · Esc or left click to exit`;
     this.hud.classList.remove("hidden");
   }
 }

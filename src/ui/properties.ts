@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { Editor } from "../editor";
-import { CameraElement, CUT_DIRECTIONS, CutPlaneElement, SceneElement, SplatElement } from "../elements";
+import { AXIS_LETTERS, CameraElement, CUT_DIRECTIONS, CutPlaneElement, SceneElement, SplatElement } from "../elements";
 import { Viewport } from "../viewport";
 
 type Binding = { sync: () => void };
@@ -59,7 +59,7 @@ export class PropertiesPanel {
     s.append(this.row("Position", ...(["x", "y", "z"] as const).map((k) =>
       this.number(() => p[k], (v) => (p[k] = v), { tag: k, step: 0.1 }))));
     if (el.kind === "cutplane") {
-      s.append(this.note("Cut-planes can only be moved; use the cut direction below to orient them."));
+      s.append(this.note("Cut-planes can be moved and resized (S), not rotated; use the cut direction below to orient them."));
       return;
     }
     const q = el.root.quaternion;
@@ -75,9 +75,8 @@ export class PropertiesPanel {
     // Typing (not scrubbing) should use the current value.
     s.addEventListener("focusin", () => (base = null));
     if (el.canScale) {
-      const sc = el.root.scale;
       s.append(this.row("Scale", ...(["x", "y", "z"] as const).map((k) =>
-        this.number(() => sc[k], (v) => (sc[k] = v), { tag: k, step: 0.1 }))));
+        this.number(() => el.getScale()[k], (v) => el.setScale(el.getScale().setComponent("xyz".indexOf(k), v)), { tag: k, step: 0.1 }))));
     }
     const buttons = document.createElement("div");
     buttons.className = "p-buttons";
@@ -233,17 +232,23 @@ export class PropertiesPanel {
       (v) => {
         cut.setDirection(v as CutPlaneElement["direction"]);
         this.editor.emit("props");
+        this.render(); // the size fields depend on the in-plane axes
       },
     )));
     s.append(this.row("Enabled", this.checkbox(() => cut.enabled, (v) => {
       cut.setEnabled(v);
       this.editor.emit("props");
     })));
-    s.append(this.row("Display size",
-      this.number(() => cut.size, (v) => cut.setSize(v), { step: 0.5 })));
-    const axis = cut.direction[1];
+    const { iu, iv } = cut.basis();
+    s.append(this.row("Size (m)", ...[iu, iv].map((a) =>
+      this.number(() => cut.extent.getComponent(a), (v) => cut.setExtent(a, v), { tag: AXIS_LETTERS[a], step: 0.5 }))));
+    const axis = cut.direction[1].toLowerCase();
     const op = cut.direction[0] === "+" ? "<" : ">";
-    s.append(this.note(`Hides every gaussian with ${axis.toLowerCase()} ${op} plane ${axis.toLowerCase()}. The arrow points to the side that is kept.`));
+    const [u, v] = [AXIS_LETTERS[iu], AXIS_LETTERS[iv]];
+    s.append(this.note(
+      `Hides gaussians with ${axis} ${op} plane ${axis} whose ${u} and ${v} fall inside the rectangle ` +
+      `(resize with S, constrain with ${u.toUpperCase()}/${v.toUpperCase()}). The arrow points to the side that is kept.`,
+    ));
   }
 
   // ----------------------------------------------------------- widgets
