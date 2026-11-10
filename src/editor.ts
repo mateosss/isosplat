@@ -16,7 +16,7 @@ export class Editor {
   readonly world = {
     background: "#3a3a3a",
     /** Render PNGs with a transparent background instead of the world color. */
-    transparentRender: false,
+    transparentRender: true,
     /** Color gaussians and points by view depth (jet colormap) instead of their colors. */
     depthView: false,
     /** Fit the depth range to the visible scene every frame; otherwise use depthMin/depthMax. */
