@@ -76,8 +76,9 @@ in their shader.
   camera's resolution; from the free view it uses the viewport's pixel size.
 - **Cuts**: cut-planes (+ Cut) remove what is behind them within their rectangle (resize with S);
   uncheck **Bounded** to cut the whole half-space behind the plane instead (handy for far-away
-  floaters; the six default planes and projects saved before rectangles existed are unbounded). Cut-boxes (+ Box) remove
-  everything inside them (move / rotate / scale with G / R / S).
+  floaters; the six default planes and projects saved before rectangles existed are unbounded). Cut-boxes (+ Box) keep only
+  what is inside them, or with **Invert** remove their inside and keep the rest (move / rotate /
+  scale with G / R / S).
 - **Minimap** (▣ Minimap, or "Preview in minimap" on a camera): a second, resizable view in the
   corner (drag its top-left corner). It works like the main view (orbit, click to select, G/R/S,
   numpad keys, F, W fly…: keys act on the view under the mouse) with its options in its ☰ menu,

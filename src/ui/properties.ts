@@ -270,7 +270,17 @@ export class PropertiesPanel {
       box.setEnabled(v);
       this.editor.emit("props");
     })));
-    s.append(this.note("Hides every gaussian inside the box. Its scale is its size in meters; move, rotate and scale it with G / R / S."));
+    s.append(this.row("Invert", this.checkbox(() => box.invert, (v) => {
+      box.setInvert(v);
+      this.editor.emit("props");
+      this.render();
+    })));
+    s.append(this.note(
+      (box.invert
+        ? "Inverted: removes every gaussian inside the box and keeps the rest. "
+        : "Keeps only the gaussians inside the box and removes everything outside it. ") +
+      "Its scale is its size in meters; move, rotate and scale it with G / R / S.",
+    ));
   }
 
   // ----------------------------------------------------------- widgets

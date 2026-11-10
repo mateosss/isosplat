@@ -56,6 +56,8 @@ type CutJson = ElementJsonBase & {
 type CutBoxJson = ElementJsonBase & {
   kind: "cutbox";
   enabled: boolean;
+  /** Remove the inside instead of the outside (absent in older projects, whose boxes removed their inside). */
+  invert?: boolean;
 };
 type ElementJson = CameraJson | SplatJson | CutJson | CutBoxJson;
 
@@ -109,7 +111,7 @@ export function buildProject(
         renderMode: e.renderMode, pointSize: e.pointSize, visible: e.visible, data,
       };
     }
-    if (e instanceof CutBoxElement) return { kind: "cutbox", ...base(e), enabled: e.enabled };
+    if (e instanceof CutBoxElement) return { kind: "cutbox", ...base(e), enabled: e.enabled, invert: e.invert };
     const c = e as CutPlaneElement;
     return { kind: "cutplane", ...base(c), direction: c.direction, extent: c.extent.toArray(), bounded: c.bounded, enabled: c.enabled };
   });
@@ -187,6 +189,7 @@ export async function applyProject(editor: Editor, file: Blob) {
       const box = editor.addCutBox();
       applyPose(box, j);
       box.setEnabled(j.enabled);
+      box.setInvert(j.invert ?? true);
       created.push(box);
     } else if (j.kind === "splat") {
       // Keep the hierarchy order: reserve the slot, the element is added when its bytes are read.

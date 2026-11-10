@@ -103,7 +103,7 @@ export class Editor {
     return this.add(el);
   }
 
-  /** A cut-box (2 m cube by default) that removes every gaussian inside it. */
+  /** A cut-box (2 m cube by default): keeps what is inside and removes the rest (unless inverted). */
   addCutBox(position = new THREE.Vector3(), size = 2) {
     const el = new CutBoxElement(this.uniqueName("Cut-box"));
     el.root.position.copy(position);
@@ -189,6 +189,7 @@ export class Editor {
     for (let i = 0; i < n; i++) {
       pointCutUniforms.uCutInv.value[i].copy(enabled[i].inverse);
       pointCutUniforms.uCutHalf.value[i].copy(enabled[i].half);
+      pointCutUniforms.uCutRemoveInside.value[i] = enabled[i].removesInside() ? 1 : 0;
     }
   }
 

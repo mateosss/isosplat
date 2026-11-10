@@ -434,6 +434,11 @@ export abstract class CutElement extends SceneElement {
 
   protected abstract computeBox(center: THREE.Vector3, quat: THREE.Quaternion, half: THREE.Vector3): void;
 
+  /** True: removes what is inside the box. False: removes everything outside it (keeps the inside). */
+  removesInside() {
+    return true;
+  }
+
   setEnabled(enabled: boolean) {
     this.enabled = enabled;
     this.updateAppearance();
@@ -447,6 +452,8 @@ export abstract class CutElement extends SceneElement {
     this.sdf.position.copy(center);
     this.sdf.quaternion.copy(quat);
     this.sdf.scale.copy(this.half); // Spark reads the box half extents from the SDF's scale
+    // Inverted SDF: "inside" (removed) becomes everything outside the box.
+    this.sdf.invert = !this.removesInside();
     this.inverse.compose(center, quat, new THREE.Vector3(1, 1, 1)).invert();
   }
 
@@ -454,7 +461,8 @@ export abstract class CutElement extends SceneElement {
   cuts(p: THREE.Vector3) {
     if (!this.enabled) return false;
     const l = p.clone().applyMatrix4(this.inverse);
-    return Math.abs(l.x) <= this.half.x && Math.abs(l.y) <= this.half.y && Math.abs(l.z) <= this.half.z;
+    const inside = Math.abs(l.x) <= this.half.x && Math.abs(l.y) <= this.half.y && Math.abs(l.z) <= this.half.z;
+    return inside === this.removesInside();
   }
 }
 
@@ -597,15 +605,18 @@ export class CutPlaneElement extends CutElement {
 const BOX_COLOR = new THREE.Color(0xff7ad9);
 
 /**
- * Removes every gaussian inside the box. The box is a unit cube transformed by
- * the element's pose, so its size in meters is its scale (G/R/S all apply).
+ * Crops to a box: by default keeps what is inside and removes everything outside;
+ * inverted, removes what is inside and keeps the rest. The box is a unit cube
+ * transformed by the element's pose, so its size in meters is its scale (G/R/S apply).
  */
 export class CutBoxElement extends CutElement {
   readonly kind = "cutbox" as const;
+  /** false: keep inside, remove outside (crop). true: remove inside, keep outside. */
+  invert = false;
   private edgeMat = new THREE.LineBasicMaterial({ color: BOX_COLOR });
   private faceMat = new THREE.LineBasicMaterial({ color: BOX_COLOR, transparent: true, opacity: 0.3 });
   private edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), this.edgeMat);
-  /** Face diagonals, so the box reads as a solid region and not just a frame. */
+  /** Face diagonals, shown when the box removes its inside (it reads as a solid block). */
   private faces: THREE.LineSegments;
 
   constructor(name: string) {
@@ -639,6 +650,16 @@ export class CutBoxElement extends CutElement {
     const base = this.enabled ? BOX_COLOR : new THREE.Color(0x777777);
     this.edgeMat.color.copy(this.selected ? SELECT_COLOR : base);
     this.faceMat.color.copy(this.selected ? SELECT_COLOR : base);
+    this.faces.visible = this.invert;
+  }
+
+  override removesInside() {
+    return this.invert;
+  }
+
+  setInvert(invert: boolean) {
+    this.invert = invert;
+    this.updateAppearance();
   }
 
   protected computeBox(center: THREE.Vector3, quat: THREE.Quaternion, half: THREE.Vector3) {

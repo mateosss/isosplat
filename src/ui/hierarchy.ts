@@ -76,6 +76,7 @@ export class HierarchyPanel {
       meta.textContent = el.bounded ? el.direction : `${el.direction} ∞`;
       row.classList.toggle("disabled", !el.enabled);
     } else if (el instanceof CutBoxElement) {
+      meta.textContent = el.invert ? "remove inside" : "keep inside";
       row.classList.toggle("disabled", !el.enabled);
     }
     row.append(badge, name, meta);
