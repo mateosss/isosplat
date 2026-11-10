@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { Editor } from "../editor";
 import { AXIS_LETTERS, CameraElement, CutBoxElement, CUT_DIRECTIONS, CutPlaneElement, SceneElement, SplatElement } from "../elements";
-import { Viewport } from "../viewport";
+import type { View, Viewport } from "../viewport";
 
 type Binding = { sync: () => void };
 
@@ -11,8 +11,11 @@ export class PropertiesPanel {
 
   /** Called by "Render PNG" buttons; set by main. */
   onRender: (cam: CameraElement | null) => void = () => {};
+  /** Called by "Preview in minimap"; set by main. */
+  onPreview: (cam: CameraElement) => void = () => {};
 
-  constructor(private body: HTMLElement, private editor: Editor, private vp: Viewport) {
+  /** `view` is the main view (camera buttons and framing act on it). */
+  constructor(private body: HTMLElement, private editor: Editor, private vp: Viewport, private view: View) {
     editor.on("selection", () => this.render());
     editor.on("elements", () => {
       if (editor.selected && !editor.elements.includes(editor.selected)) this.render();
@@ -133,9 +136,10 @@ export class PropertiesPanel {
     const buttons = document.createElement("div");
     buttons.className = "p-buttons";
     buttons.append(
-      this.button("👁 Look from camera", () => this.vp.lookFrom(cam)),
+      this.button("👁 Look from camera", () => this.view.lookFrom(cam)),
+      this.button("▣ Preview in minimap", () => this.onPreview(cam)),
       this.button("Set from current view", () => {
-        this.vp.copyViewToCamera(cam);
+        this.view.copyViewToCamera(cam);
         this.render();
       }),
       this.button("📷 Render PNG", () => this.onRender(cam)),
@@ -221,7 +225,7 @@ export class PropertiesPanel {
     s.append(this.row("Info", info));
     const buttons = document.createElement("div");
     buttons.className = "p-buttons";
-    buttons.append(this.button("Frame in view", () => this.vp.frame(sp)));
+    buttons.append(this.button("Frame in view", () => this.view.frame(sp)));
     s.append(buttons);
   }
 
@@ -240,6 +244,11 @@ export class PropertiesPanel {
       cut.setEnabled(v);
       this.editor.emit("props");
     })));
+    s.append(this.row("Bounded", this.checkbox(() => cut.bounded, (v) => {
+      cut.bounded = v;
+      this.editor.emit("props");
+      this.render();
+    })));
     const { iu, iv } = cut.basis();
     s.append(this.row("Size (m)", ...[iu, iv].map((a) =>
       this.number(() => cut.extent.getComponent(a), (v) => cut.setExtent(a, v), { tag: AXIS_LETTERS[a], step: 0.5 }))));
@@ -247,8 +256,11 @@ export class PropertiesPanel {
     const op = cut.direction[0] === "+" ? "<" : ">";
     const [u, v] = [AXIS_LETTERS[iu], AXIS_LETTERS[iv]];
     s.append(this.note(
-      `Hides gaussians with ${axis} ${op} plane ${axis} whose ${u} and ${v} fall inside the rectangle ` +
-      `(resize with S, constrain with ${u.toUpperCase()}/${v.toUpperCase()}). The arrow points to the side that is kept.`,
+      cut.bounded
+        ? `Hides gaussians with ${axis} ${op} plane ${axis} whose ${u} and ${v} fall inside the rectangle ` +
+          `(resize with S, constrain with ${u.toUpperCase()}/${v.toUpperCase()}). The arrow points to the side that is kept.`
+        : `Unbounded: hides every gaussian with ${axis} ${op} plane ${axis}, whatever its ${u} and ${v} ` +
+          `(the rectangle is only drawn). Useful to remove far-away floaters. The arrow points to the side that is kept.`,
     ));
   }
 

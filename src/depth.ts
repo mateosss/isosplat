@@ -5,7 +5,10 @@ import type { Editor } from "./editor";
 /*
  * Depth view: colors every gaussian / point by its view-space depth (distance
  * along the camera's viewing axis) using matplotlib's "jet" colormap.
- * Both renderers read the same [min, max] range, so splats and point clouds match.
+ * Splats and point clouds read the same [min, max] range for a view, so they match.
+ * Each view has its own range: point clouds get it through shared uniforms set
+ * before the view renders, splats through per-mesh uniforms (each view renders its
+ * own SplatMesh, see SplatElement.viewMesh).
  */
 
 /** GLSL jet colormap (matplotlib), t in [0, 1] -> sRGB. Dark blue -> blue -> cyan -> yellow -> red -> dark red. */
@@ -15,10 +18,25 @@ const JET_GLSL = "clamp(vec3(1.5) - abs(vec3(4.0 * t) - vec3(3.0, 2.0, 1.0)), 0.
 export const JET_CSS =
   "linear-gradient(to right, rgb(0,0,128) 0%, rgb(0,0,255) 12.5%, rgb(0,255,255) 37.5%, rgb(255,255,0) 62.5%, rgb(255,0,0) 87.5%, rgb(128,0,0) 100%)";
 
-// ---------------------------------------------------------------- shared range
+// ---------------------------------------------------------------- range
 
-const splatMin = new dyno.DynoFloat({ value: 0.5 });
-const splatMax = new dyno.DynoFloat({ value: 20 });
+/** Depth range uniforms of one SplatMesh. */
+export interface MeshDepthUniforms {
+  min: dyno.DynoFloat;
+  max: dyno.DynoFloat;
+}
+
+export function makeDepthUniforms(): MeshDepthUniforms {
+  return { min: new dyno.DynoFloat({ value: 0.5 }), max: new dyno.DynoFloat({ value: 20 }) };
+}
+
+/** Set a mesh's range; regenerates its splats only if it changed. */
+export function setMeshDepthRange(mesh: SplatMesh, u: MeshDepthUniforms, min: number, max: number) {
+  if (Math.abs(u.min.value - min) < 1e-5 && Math.abs(u.max.value - max) < 1e-5) return;
+  u.min.value = min;
+  u.max.value = max;
+  mesh.updateVersion();
+}
 
 /** three.js uniforms shared by every point-cloud material. */
 export const pointDepthUniforms = {
@@ -29,13 +47,10 @@ export const pointDepthUniforms = {
 
 export const depthRange = { min: 0.5, max: 20 };
 
-/** Set the current range. Returns true if it changed (splats then need regenerating). */
-export function setDepthRange(min: number, max: number) {
-  if (max - min < 1e-3) max = min + 1e-3;
-  if (Math.abs(min - depthRange.min) < 1e-5 && Math.abs(max - depthRange.max) < 1e-5) return false;
-  depthRange.min = splatMin.value = pointDepthUniforms.uDepthMin.value = min;
-  depthRange.max = splatMax.value = pointDepthUniforms.uDepthMax.value = max;
-  return true;
+/** Range of the view being rendered (point clouds read it). */
+function setPointDepthRange(min: number, max: number) {
+  depthRange.min = pointDepthUniforms.uDepthMin.value = min;
+  depthRange.max = pointDepthUniforms.uDepthMax.value = max;
 }
 
 // ---------------------------------------------------------------- splats (Spark dyno)
@@ -57,19 +72,19 @@ class JetDepth extends dyno.Dyno<{ depth: "float"; zMin: "float"; zMax: "float" 
 }
 
 /** World-space modifier for one mesh: replaces the color by jet(depth), keeps opacity and shape. */
-function makeJetModifier(mesh: SplatMesh) {
+function makeJetModifier(mesh: SplatMesh, u: MeshDepthUniforms) {
   return dyno.dynoBlock({ gsplat: dyno.Gsplat }, { gsplat: dyno.Gsplat }, ({ gsplat }) => {
     if (!gsplat) throw new Error("No gsplat input");
     const { center } = dyno.splitGsplat(gsplat).outputs;
     const { z } = dyno.split(mesh.context.worldToView.apply(center)).outputs;
-    const { rgb } = new JetDepth({ depth: dyno.neg(z), zMin: splatMin, zMax: splatMax }).outputs;
+    const { rgb } = new JetDepth({ depth: dyno.neg(z), zMin: u.min, zMax: u.max }).outputs;
     return { gsplat: dyno.combineGsplat({ gsplat, rgb }) };
   });
 }
 
-export function setSplatDepthView(mesh: SplatMesh, on: boolean) {
+export function setSplatDepthView(mesh: SplatMesh, u: MeshDepthUniforms, on: boolean) {
   mesh.enableWorldToView = on; // regenerate when the camera moves
-  mesh.worldModifier = on ? makeJetModifier(mesh) : undefined;
+  mesh.worldModifier = on ? makeJetModifier(mesh, u) : undefined;
   mesh.updateGenerator();
 }
 
@@ -130,22 +145,32 @@ export function autoDepthRange(editor: Editor, camera: THREE.Camera): { min: num
 }
 
 /**
- * Per-frame update: toggle depth view on every element and refresh the range
- * (automatic for `camera`, or the manual values from the world settings).
+ * Called before rendering a view: toggle depth view on every element and set the range
+ * (automatic for `camera`, or the manual values from the world settings). Views have
+ * their own automatic range; only the main view writes it back to the world settings.
  */
-export function updateDepthView(editor: Editor, camera: THREE.Camera) {
+export function updateDepthView(
+  editor: Editor,
+  camera: THREE.Camera,
+  viewIndex: number,
+  writeWorld = true,
+): { min: number; max: number } | null {
   const w = editor.world;
   pointDepthUniforms.uDepthView.value = w.depthView;
   for (const s of editor.splats()) if (s.loaded && s.depthView !== w.depthView) s.setDepthView(w.depthView);
-  if (!w.depthView) return;
+  if (!w.depthView) return null;
+  let min = w.depthMin, max = w.depthMax;
   if (w.depthAuto) {
     const r = autoDepthRange(editor, camera);
-    if (r) {
-      w.depthMin = r.min;
-      w.depthMax = r.max;
+    if (r) ({ min, max } = r);
+    else ({ min, max } = depthRange); // nothing visible: keep the last range
+    if (writeWorld) {
+      w.depthMin = min;
+      w.depthMax = max;
     }
   }
-  if (setDepthRange(w.depthMin, w.depthMax)) {
-    for (const s of editor.splats()) if (s.loaded) s.mesh.updateVersion();
-  }
+  if (max - min < 1e-3) max = min + 1e-3;
+  setPointDepthRange(min, max);
+  for (const s of editor.splats()) if (s.loaded) s.setDepthRange(viewIndex, min, max);
+  return { min, max };
 }

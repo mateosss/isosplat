@@ -2,7 +2,8 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { SparkRenderer } from "@sparkjsdev/spark";
 import { Editor } from "./editor";
-import { AXIS_COLORS, CameraElement, SceneElement, SplatElement } from "./elements";
+import { AXIS_COLORS, CameraElement, OVERLAY_LAYER, SPLAT_LAYERS, SceneElement, SplatElement } from "./elements";
+import { updateDepthView } from "./depth";
 
 const UP = new THREE.Vector3(0, 0, 1);
 
@@ -19,17 +20,120 @@ const ORTHO_DISTANCE = 200;
 const PICK_PIXELS = 6;
 
 /**
- * The 3D view. World is Z-up (like Blender); the floor grid lies on the XY plane.
+ * The shared drawing surface: one canvas and WebGL renderer for every view (main
+ * viewport and minimap), so splat data is uploaded to the GPU only once. Each
+ * View draws into its own rectangle of the canvas.
+ * World is Z-up (like Blender); the floor grid lies on the XY plane.
  */
 export class Viewport {
   readonly renderer: THREE.WebGLRenderer;
   /**
-   * Spark renderer. `accumExtSplats` keeps the per-frame splat buffer in world space with
-   * float32 centers. The default packs centers as float16 relative to the camera position,
-   * which is fine for nearby perspective cameras but quantizes to ~6 cm when an orthographic
-   * camera sits far away (the free ortho view is 200 m back), making gaussians jitter.
+   * Spark renderer used by the main view. `accumExtSplats` keeps the per-frame splat buffer
+   * in world space with float32 centers. The default packs centers as float16 relative to the
+   * camera position, which is fine for nearby perspective cameras but quantizes to ~6 cm when
+   * an orthographic camera sits far away (the free ortho view is 200 m back): gaussians jitter.
    */
   readonly spark: SparkRenderer;
+  readonly views: View[] = [];
+  readonly helpers = new THREE.Group();
+  readonly constraintLine: THREE.Line;
+  width = 1;
+  height = 1;
+
+  constructor(
+    readonly container: HTMLElement,
+    readonly canvas: HTMLCanvasElement,
+    readonly editor: Editor,
+  ) {
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setClearColor(0x3a3a3a);
+    this.renderer.setScissorTest(true);
+
+    this.spark = new SparkRenderer({ renderer: this.renderer, accumExtSplats: true });
+    editor.scene.add(this.spark);
+
+    this.buildHelpers();
+    editor.scene.add(this.helpers);
+
+    this.constraintLine = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-1, 0, 0), new THREE.Vector3(1, 0, 0)]),
+      new THREE.LineBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true }),
+    );
+    this.constraintLine.visible = false;
+    this.constraintLine.renderOrder = 11;
+    this.constraintLine.layers.set(OVERLAY_LAYER);
+    editor.scene.add(this.constraintLine);
+
+    new ResizeObserver(() => this.resize()).observe(container);
+    this.resize();
+  }
+
+  /** A second Spark renderer (own splat sort) for an additional view sharing this GL context. */
+  makeSpark() {
+    return new SparkRenderer({ renderer: this.renderer, accumExtSplats: true });
+  }
+
+  private buildHelpers() {
+    const grid = new THREE.GridHelper(100, 100, 0x5a5a5a, 0x4a4a4a);
+    grid.rotation.x = Math.PI / 2; // GridHelper is XZ; make it XY (Z-up floor)
+    const gm = grid.material as THREE.LineBasicMaterial;
+    gm.opacity = 0.6;
+    gm.depthWrite = false;
+    this.helpers.add(grid);
+
+    const L = 50;
+    const axisLine = (axis: number, length: number, opacity: number) => {
+      const a = new THREE.Vector3().setComponent(axis, -length);
+      const b = new THREE.Vector3().setComponent(axis, length);
+      const mat = new THREE.LineBasicMaterial({ color: AXIS_COLORS[axis], opacity, depthWrite: false });
+      return new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, b]), mat);
+    };
+    this.helpers.add(axisLine(0, L, 0.9), axisLine(1, L, 0.9), axisLine(2, 5, 0.6));
+    // Overlays (per-view toggle via camera layers); drawn before the splats so the splats cover them.
+    this.helpers.traverse((o) => {
+      o.raycast = () => {};
+      o.renderOrder = -10;
+      o.layers.set(OVERLAY_LAYER);
+      const m = (o as THREE.Line).material as THREE.Material;
+      if (m) m.transparent = true;
+    });
+  }
+
+  setBackground(color: string) {
+    this.renderer.setClearColor(color);
+    this.container.style.background = color;
+  }
+
+  resize() {
+    const r = this.container.getBoundingClientRect();
+    this.width = Math.max(1, r.width);
+    this.height = Math.max(1, r.height);
+    this.renderer.setSize(this.width, this.height, false);
+    this.views.forEach((v) => v.resize());
+  }
+
+  /** The visible view under a client-space point (the minimap wins over the main view). */
+  viewAt(clientX: number, clientY: number): View | null {
+    for (let i = this.views.length - 1; i >= 0; i--) {
+      const v = this.views[i];
+      if (!v.visible) continue;
+      const r = v.el.getBoundingClientRect();
+      if (clientX >= r.left && clientX < r.right && clientY >= r.top && clientY < r.bottom) return v;
+    }
+    return null;
+  }
+
+  render() {
+    for (const v of this.views) if (v.visible) v.render();
+  }
+}
+
+/**
+ * One viewpoint: its own cameras, orbit controls, camera lock, overlays toggle and
+ * screen rectangle. Used for the main viewport and for the minimap.
+ */
+export class View {
   readonly perspCam = new THREE.PerspectiveCamera(50, 1, 0.02, 2000);
   readonly orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.02, 4000);
   activeCam: THREE.PerspectiveCamera | THREE.OrthographicCamera = this.perspCam;
@@ -38,11 +142,13 @@ export class Viewport {
   private orthoHeight = 10;
   lockedCamera: CameraElement | null = null;
   private lockedProjection: ReturnType<CameraElement["projection"]> | null = null;
-
-  readonly helpers = new THREE.Group();
-  readonly constraintLine: THREE.Line;
-  width = 1;
-  height = 1;
+  /** Grid, axes, wireframes, gizmos and selection outlines in this view. */
+  overlays = true;
+  visible = true;
+  /** Rectangle inside the shared canvas, CSS pixels from its top-left. */
+  readonly rect = { x: 0, y: 0, w: 1, h: 1 };
+  /** Depth-view range used for the last render of this view. */
+  readonly depth = { min: 0, max: 1 };
   /** Short view transition: target lerps, orbit offset rotates about `axis` and changes length. */
   private anim: {
     t0: number;
@@ -55,25 +161,23 @@ export class Viewport {
     len1: number;
   } | null = null;
   onViewChanged: () => void = () => {};
+  /** Position in vp.views: selects the SplatMesh layer this view renders. */
+  readonly index: number;
 
   constructor(
-    readonly container: HTMLElement,
-    readonly canvas: HTMLCanvasElement,
-    readonly editor: Editor,
-    private frameEl: HTMLElement,
-    private labelEl: HTMLElement,
+    readonly vp: Viewport,
+    readonly name: string,
+    /** The view's box in the page (its rectangle; overlays-off class goes here). */
+    readonly el: HTMLElement,
+    /** Element receiving orbit/zoom/pan input. */
+    readonly surface: HTMLElement,
+    private ui: { frame: HTMLElement; label: HTMLElement },
+    /** Own Spark renderer (own sort) or null to use the one in the scene. */
+    private spark: SparkRenderer | null = null,
   ) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.localClippingEnabled = true;
-    this.renderer.setClearColor(0x3a3a3a);
-
-    this.spark = new SparkRenderer({ renderer: this.renderer, accumExtSplats: true });
-    editor.scene.add(this.spark);
-
     for (const cam of [this.perspCam, this.orthoCam]) cam.up.copy(UP);
     this.perspCam.position.set(12, -14, 9);
-    this.controls = new OrbitControls(this.perspCam, canvas);
+    this.controls = new OrbitControls(this.perspCam, surface);
     this.controls.target.set(0, 0, 0);
     this.controls.enableDamping = false;
     this.controls.zoomToCursor = true;
@@ -83,60 +187,39 @@ export class Viewport {
       this.unlock();
     });
     this.controls.update();
-
-    this.buildHelpers();
-    editor.scene.add(this.helpers);
-
-    this.constraintLine = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-1, 0, 0), new THREE.Vector3(1, 0, 0)]),
-      new THREE.LineBasicMaterial({ color: 0xffffff, depthTest: false }),
-    );
-    this.constraintLine.visible = false;
-    this.constraintLine.renderOrder = 11;
-    (this.constraintLine.material as THREE.Material).transparent = true;
-    editor.scene.add(this.constraintLine);
-
-    new ResizeObserver(() => this.resize()).observe(container);
+    this.index = vp.views.length;
+    if (this.index >= SPLAT_LAYERS.length) throw new Error("Too many views");
+    vp.views.push(this);
+    new ResizeObserver(() => this.resize()).observe(el);
     this.resize();
   }
 
-  // ---------------------------------------------------------------- helpers
+  get editor(): Editor {
+    return this.vp.editor;
+  }
 
-  private buildHelpers() {
-    const grid = new THREE.GridHelper(100, 100, 0x5a5a5a, 0x4a4a4a);
-    grid.rotation.x = Math.PI / 2; // GridHelper is XZ; make it XY (Z-up floor)
-    const gm = grid.material as THREE.LineBasicMaterial;
-    gm.transparent = true;
-    gm.opacity = 0.6;
-    gm.depthWrite = false;
-    this.helpers.add(grid);
+  get width() {
+    return this.rect.w;
+  }
 
-    const L = 50;
-    const axisLine = (axis: number, length: number, opacity: number) => {
-      const a = new THREE.Vector3().setComponent(axis, -length);
-      const b = new THREE.Vector3().setComponent(axis, length);
-      const mat = new THREE.LineBasicMaterial({ color: AXIS_COLORS[axis], transparent: true, opacity, depthWrite: false });
-      return new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, b]), mat);
-    };
-    this.helpers.add(axisLine(0, L, 0.9), axisLine(1, L, 0.9), axisLine(2, 5, 0.6));
-    // Draw grid/axes before the splats so the splats cover them.
-    this.helpers.traverse((o) => {
-      o.raycast = () => {};
-      o.renderOrder = -10;
-      const m = (o as THREE.Line).material as THREE.Material;
-      if (m) m.transparent = true;
-    });
+  get height() {
+    return this.rect.h;
+  }
+
+  get sparkRenderer() {
+    return this.spark ?? this.vp.spark;
   }
 
   setOverlaysVisible(v: boolean) {
-    this.helpers.visible = v;
-    this.container.classList.toggle("overlays-off", !v);
-    if (!v) this.constraintLine.visible = false;
+    this.overlays = v;
+    this.el.classList.toggle("overlays-off", !v);
   }
 
-  setBackground(color: string) {
-    this.renderer.setClearColor(color);
-    this.container.style.background = color;
+  setVisible(v: boolean) {
+    this.visible = v;
+    this.el.classList.toggle("hidden", !v);
+    if (!v) this.unlock();
+    this.resize();
   }
 
   /** Serializable free-view state (camera-view locks are not saved). */
@@ -169,10 +252,10 @@ export class Viewport {
   // ---------------------------------------------------------------- sizing
 
   resize() {
-    const r = this.container.getBoundingClientRect();
-    this.width = Math.max(1, r.width);
-    this.height = Math.max(1, r.height);
-    this.renderer.setSize(this.width, this.height, false);
+    const c = this.vp.container.getBoundingClientRect();
+    const r = this.el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return; // hidden
+    Object.assign(this.rect, { x: r.left - c.left, y: r.top - c.top, w: r.width, h: r.height });
     this.perspCam.aspect = this.width / this.height;
     this.perspCam.updateProjectionMatrix();
     this.updateOrthoFrustum();
@@ -258,7 +341,7 @@ export class Viewport {
       radius = Math.max(0.5, box.getSize(new THREE.Vector3()).length() / 2);
     } else if (el) {
       center = el.root.getWorldPosition(new THREE.Vector3());
-      radius = el.kind === "cutplane" ? 3 : 1.5;
+      radius = el.kind === "cutplane" || el.kind === "cutbox" ? 3 : 1.5;
     } else {
       const splats = this.editor.splats().filter((s) => s.loaded);
       if (splats.length === 0) return;
@@ -275,9 +358,7 @@ export class Viewport {
   // ---------------------------------------------------------------- camera lock ("look from camera")
 
   lookFrom(cam: CameraElement) {
-    this.lockedCamera?.setViewing(false);
     this.lockedCamera = cam;
-    cam.setViewing(true);
     this.setActive(cam.type === "pinhole" ? this.perspCam : this.orthoCam);
     this.applyLock();
     this.onViewChanged();
@@ -302,7 +383,6 @@ export class Viewport {
   unlock() {
     const cam = this.lockedCamera;
     if (!cam) return;
-    cam.setViewing(false);
     this.lockedCamera = null;
     this.lockedProjection = null;
     const { s } = cam.fit(this.width, this.height);
@@ -321,25 +401,49 @@ export class Viewport {
   // ---------------------------------------------------------------- per-frame
 
   update() {
+    if (!this.visible) return;
     this.stepAnim();
-    // Parallel rays: sort by depth along the view axis, not by distance to the camera point.
-    this.spark.sortRadial = !this.isOrtho;
     if (this.lockedCamera) {
       if (!this.editor.elements.includes(this.lockedCamera)) this.unlock();
       else this.applyLock();
     }
     const f = this.lockedProjection?.frame;
-    this.frameEl.classList.toggle("hidden", !f);
+    this.ui.frame.classList.toggle("hidden", !f);
     if (f) {
-      Object.assign(this.frameEl.style, { left: `${f.x}px`, top: `${f.y}px`, width: `${f.w}px`, height: `${f.h}px` });
+      Object.assign(this.ui.frame.style, { left: `${f.x}px`, top: `${f.y}px`, width: `${f.w}px`, height: `${f.h}px` });
     }
-    const label = this.lockedCamera ? `Camera view: ${this.lockedCamera.name}` : this.isOrtho ? "User orthographic" : "User perspective";
-    if (this.labelEl.textContent !== label) this.labelEl.textContent = label;
-    this.labelEl.classList.remove("hidden");
+    const label = this.lockedCamera ? `Camera: ${this.lockedCamera.name}` : this.isOrtho ? "User orthographic" : "User perspective";
+    if (this.ui.label.textContent !== label) this.ui.label.textContent = label;
   }
 
   render() {
-    this.renderer.render(this.editor.scene, this.activeCam);
+    const vp = this.vp;
+    const r = vp.renderer;
+    const cam = this.activeCam;
+    // three's viewport origin is bottom-left.
+    const y = vp.height - this.rect.y - this.rect.h;
+    r.setViewport(this.rect.x, y, this.rect.w, this.rect.h);
+    r.setScissor(this.rect.x, y, this.rect.w, this.rect.h);
+    cam.layers.set(0);
+    cam.layers.enable(SPLAT_LAYERS[this.index]);
+    if (this.overlays) cam.layers.enable(OVERLAY_LAYER);
+    for (const s of this.editor.splats()) if (s.loaded) s.viewMesh(this.index);
+
+    const spark = this.sparkRenderer;
+    // Parallel rays: sort by depth along the view axis, not by distance to the camera point.
+    spark.sortRadial = !this.isOrtho;
+    const range = updateDepthView(this.editor, cam, this.index, this.index === 0);
+    if (range) Object.assign(this.depth, range);
+    // A camera seen from itself would cover the whole view with its own frustum lines.
+    const hidden = this.lockedCamera;
+    hidden?.setGizmoVisible(false);
+    if (this.spark) SparkRenderer.sparkOverride = this.spark;
+    try {
+      r.render(this.editor.scene, cam);
+    } finally {
+      SparkRenderer.sparkOverride = undefined;
+      hidden?.setGizmoVisible(true);
+    }
   }
 
   // ---------------------------------------------------------------- navigation (orbit center, numpad)
@@ -377,9 +481,10 @@ export class Viewport {
     if (t >= 1) this.anim = null;
   }
 
-  /** Visible surface point (splats, respecting cut-planes) under a viewport pixel. */
+  /** Visible surface point (splats, respecting cuts) under a view pixel. */
   pickPoint(x: number, y: number): THREE.Vector3 | null {
     const raycaster = new THREE.Raycaster();
+    raycaster.layers.enableAll(); // splat meshes live on their own layers
     this.activeCam.updateMatrixWorld();
     raycaster.setFromCamera(this.toNdc(x, y), this.activeCam);
     let best: THREE.Vector3 | null = null;
@@ -402,7 +507,7 @@ export class Viewport {
     this.animate(point, null, 0, len1);
   }
 
-  /** Orbit center <- surface under the viewport center (view doesn't move). Returns false if nothing is there. */
+  /** Orbit center <- surface under the view center (view doesn't move). Returns false if nothing is there. */
   centerOrbitAtViewCenter() {
     const p = this.pickPoint(this.width / 2, this.height / 2);
     if (!p) return false;
@@ -453,7 +558,7 @@ export class Viewport {
     }
   }
 
-  // ---------------------------------------------------------------- math helpers
+  // ---------------------------------------------------------------- math helpers (view pixels)
 
   worldToPixel(p: THREE.Vector3) {
     const v = p.clone().project(this.activeCam);
@@ -475,9 +580,15 @@ export class Viewport {
     return new THREE.Vector2((x / this.width) * 2 - 1, -(y / this.height) * 2 + 1);
   }
 
+  /** Client (page) coordinates -> view pixel coordinates. */
+  toLocal(clientX: number, clientY: number) {
+    const r = this.el.getBoundingClientRect();
+    return new THREE.Vector2(clientX - r.left, clientY - r.top);
+  }
+
   // ---------------------------------------------------------------- picking
 
-  /** Pick the element under the given viewport pixel. Gizmo lines win over splats. */
+  /** Pick the element under the given view pixel. Gizmo lines (if overlays are shown) win over splats. */
   pick(x: number, y: number): SceneElement | null {
     const cam = this.activeCam;
     cam.updateMatrixWorld();
@@ -494,26 +605,30 @@ export class Viewport {
     };
     const a = new THREE.Vector3(), b = new THREE.Vector3(), sa = new THREE.Vector2(), sb = new THREE.Vector2();
 
-    for (const el of this.editor.elements) {
-      for (const line of el.pickLines()) {
-        line.updateWorldMatrix(true, false);
-        const pos = line.geometry.getAttribute("position");
-        const step = (line as THREE.LineSegments).isLineSegments ? 2 : 1;
-        for (let i = 0; i + 1 < pos.count; i += step) {
-          a.fromBufferAttribute(pos, i).applyMatrix4(line.matrixWorld);
-          b.fromBufferAttribute(pos, i + 1).applyMatrix4(line.matrixWorld);
-          if (!toScreen(a, sa) || !toScreen(b, sb)) continue;
-          const d = distToSegment(mouse, sa, sb);
-          if (d < bestDist) {
-            bestDist = d;
-            best = el;
+    if (this.overlays) {
+      for (const el of this.editor.elements) {
+        if (el === this.lockedCamera) continue;
+        for (const line of el.pickLines()) {
+          line.updateWorldMatrix(true, false);
+          const pos = line.geometry.getAttribute("position");
+          const step = (line as THREE.LineSegments).isLineSegments ? 2 : 1;
+          for (let i = 0; i + 1 < pos.count; i += step) {
+            a.fromBufferAttribute(pos, i).applyMatrix4(line.matrixWorld);
+            b.fromBufferAttribute(pos, i + 1).applyMatrix4(line.matrixWorld);
+            if (!toScreen(a, sa) || !toScreen(b, sb)) continue;
+            const d = distToSegment(mouse, sa, sb);
+            if (d < bestDist) {
+              bestDist = d;
+              best = el;
+            }
           }
         }
       }
+      if (best) return best;
     }
-    if (best) return best;
 
     const raycaster = new THREE.Raycaster();
+    raycaster.layers.enableAll(); // splat meshes live on their own layers
     raycaster.setFromCamera(this.toNdc(x, y), cam);
     let bestT = Infinity;
     for (const el of this.editor.splats()) {

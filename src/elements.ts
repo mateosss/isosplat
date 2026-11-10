@@ -1,10 +1,23 @@
 import * as THREE from "three";
 import { SplatEditSdf, SplatEditSdfType, SplatMesh } from "@sparkjsdev/spark";
-import { patchPointDepthShader, setSplatDepthView } from "./depth";
+import { makeDepthUniforms, type MeshDepthUniforms, patchPointDepthShader, setMeshDepthRange, setSplatDepthView } from "./depth";
 import { patchPointCutShader } from "./cuts";
 
 export const SELECT_COLOR = new THREE.Color(0xff8c1a);
 export const AXIS_COLORS = [new THREE.Color(0xff3352), new THREE.Color(0x8bdc00), new THREE.Color(0x2890ff)];
+
+/**
+ * three.js layer of every overlay object (gizmos, wireframes, outlines, grid). Each view
+ * enables it on its camera when its overlays are on; PNG renders never do.
+ */
+export const OVERLAY_LAYER = 1;
+/**
+ * Layer of the SplatMesh each view renders (index = view index). Views get their own
+ * SplatMesh per splat (sharing the GPU data) because Spark keeps per-mesh view state
+ * (e.g. the eye position for spherical harmonics): two views sharing a mesh would
+ * invalidate each other every frame.
+ */
+export const SPLAT_LAYERS = [2, 3];
 
 export type ElementKind = "camera" | "splat" | "cutplane" | "cutbox";
 
@@ -20,7 +33,6 @@ export abstract class SceneElement {
   readonly root = new THREE.Object3D();
   name: string;
   selected = false;
-  overlaysVisible = true;
   canRotate = true;
   canScale = true;
 
@@ -36,6 +48,7 @@ export abstract class SceneElement {
   protected markOverlay(obj: THREE.Object3D, alwaysOnTop = false) {
     obj.traverse((o) => {
       o.renderOrder = 10;
+      o.layers.set(OVERLAY_LAYER);
       const mat = (o as THREE.Mesh).material as THREE.Material | undefined;
       if (mat) {
         mat.transparent = true;
@@ -49,11 +62,6 @@ export abstract class SceneElement {
 
   setSelected(selected: boolean) {
     this.selected = selected;
-    this.updateAppearance();
-  }
-
-  setOverlaysVisible(visible: boolean) {
-    this.overlaysVisible = visible;
     this.updateAppearance();
   }
 
@@ -109,8 +117,6 @@ export class CameraElement extends SceneElement {
   orthoScale = 10;
   near = 0.05;
   far = 2000;
-  /** True while the viewport looks through this camera (its own gizmo is hidden). */
-  viewing = false;
 
   private material = new THREE.LineBasicMaterial({ color: 0xd0d0d0 });
   private gizmo = new THREE.LineSegments(new THREE.BufferGeometry(), this.material);
@@ -124,17 +130,16 @@ export class CameraElement extends SceneElement {
   }
 
   pickLines() {
-    return this.gizmo.visible ? [this.gizmo] : [];
+    return [this.gizmo];
   }
 
   protected updateAppearance() {
     this.material.color.set(this.selected ? SELECT_COLOR : 0xd0d0d0);
-    this.gizmo.visible = this.overlaysVisible && !this.viewing;
   }
 
-  setViewing(viewing: boolean) {
-    this.viewing = viewing;
-    this.updateAppearance();
+  /** Hidden while a view renders through this camera. */
+  setGizmoVisible(visible: boolean) {
+    this.gizmo.visible = visible;
   }
 
   /** Image size in world units for orthographic cameras (orthoScale spans the larger side, like Blender). */
@@ -234,6 +239,9 @@ export class SplatElement extends SceneElement {
   readonly bounds = new THREE.Box3(new THREE.Vector3(-1, -1, -1), new THREE.Vector3(1, 1, 1));
 
   private points: THREE.Points | null = null;
+  /** SplatMesh rendered by each view (index 0 = `mesh`); created lazily. */
+  private viewMeshes: SplatMesh[] = [];
+  private depthUniforms = new Map<SplatMesh, MeshDepthUniforms>();
   private outline = new THREE.LineSegments(
     new THREE.BufferGeometry(),
     new THREE.LineBasicMaterial({ color: SELECT_COLOR }),
@@ -257,6 +265,8 @@ export class SplatElement extends SceneElement {
         onProgress?.();
       },
     });
+    this.mesh.layers.set(SPLAT_LAYERS[0]);
+    this.viewMeshes.push(this.mesh);
     this.root.add(this.mesh);
     this.outline.visible = false;
     this.markOverlay(this.outline, true);
@@ -269,7 +279,7 @@ export class SplatElement extends SceneElement {
   }
 
   protected updateAppearance() {
-    this.outline.visible = this.selected && this.overlaysVisible && this.loaded;
+    this.outline.visible = this.selected && this.loaded;
   }
 
   private onLoaded() {
@@ -319,9 +329,33 @@ export class SplatElement extends SceneElement {
     if (this.points) (this.points.material as THREE.PointsMaterial).size = size;
   }
 
+  /** The SplatMesh a view renders (created on first use, sharing this splat's GPU data). */
+  viewMesh(index: number): SplatMesh {
+    let m = this.viewMeshes[index];
+    if (m) return m;
+    m = new SplatMesh({ packedSplats: this.mesh.packedSplats, extSplats: this.mesh.extSplats });
+    m.layers.set(SPLAT_LAYERS[index]);
+    this.viewMeshes[index] = m;
+    this.root.add(m);
+    this.updateVisibility();
+    if (this.depthView) setSplatDepthView(m, this.meshDepth(m), true);
+    return m;
+  }
+
+  private meshDepth(m: SplatMesh) {
+    let u = this.depthUniforms.get(m);
+    if (!u) this.depthUniforms.set(m, (u = makeDepthUniforms()));
+    return u;
+  }
+
   setDepthView(on: boolean) {
     this.depthView = on;
-    setSplatDepthView(this.mesh, on);
+    for (const m of this.viewMeshes) if (m) setSplatDepthView(m, this.meshDepth(m), on);
+  }
+
+  setDepthRange(viewIndex: number, min: number, max: number) {
+    const m = this.viewMesh(viewIndex);
+    setMeshDepthRange(m, this.meshDepth(m), min, max);
   }
 
   setVisible(visible: boolean) {
@@ -330,7 +364,7 @@ export class SplatElement extends SceneElement {
   }
 
   private updateVisibility() {
-    this.mesh.visible = this.visible && this.renderMode === "splat";
+    for (const m of this.viewMeshes) if (m) m.visible = this.visible && this.renderMode === "splat";
     if (this.points) this.points.visible = this.visible && this.renderMode === "points";
   }
 
@@ -363,6 +397,14 @@ export class SplatElement extends SceneElement {
   }
 
   override dispose() {
+    // View meshes share the main mesh's data: detach it so it's freed only once.
+    for (const m of this.viewMeshes.slice(1)) {
+      if (!m) continue;
+      m.packedSplats = undefined;
+      m.extSplats = undefined;
+      m.splats = undefined;
+      m.dispose();
+    }
     this.mesh.dispose();
     super.dispose();
   }
@@ -375,6 +417,8 @@ export class SplatElement extends SceneElement {
 const Z_AXIS = new THREE.Vector3(0, 0, 1);
 /** How far a cut-plane's removal region extends behind the plane (meters). */
 const CUT_PLANE_DEPTH = 1000;
+/** In-plane half size used for unbounded cut-planes (meters): effectively infinite. */
+const UNBOUNDED_HALF = 10_000;
 
 /**
  * Base for elements that remove gaussians: each describes an oriented box
@@ -434,6 +478,12 @@ export class CutPlaneElement extends CutElement {
   direction: CutDirection;
   /** Rectangle size along each world axis (the normal axis component is ignored). */
   readonly extent = new THREE.Vector3(10, 10, 10);
+  /**
+   * Only cut inside the rectangle. Unbounded planes cut the whole half-space behind
+   * them (the rectangle is then just for display), like cut-planes before rectangles
+   * existed: useful to remove far-away floaters.
+   */
+  bounded = true;
 
   private visual = new THREE.Object3D();
   private wireMat = new THREE.LineBasicMaterial({ color: 0x7fc8ff, transparent: true, opacity: 0.35 });
@@ -518,7 +568,7 @@ export class CutPlaneElement extends CutElement {
   }
 
   pickLines() {
-    return this.visual.visible ? [this.border, this.arrow.line] : [];
+    return [this.border, this.arrow.line];
   }
 
   protected updateAppearance() {
@@ -526,7 +576,6 @@ export class CutPlaneElement extends CutElement {
     this.borderMat.color.copy(this.selected ? SELECT_COLOR : base);
     this.wireMat.color.copy(this.selected ? SELECT_COLOR : base);
     this.arrow.setColor(this.selected ? SELECT_COLOR : AXIS_COLORS[this.axisIndex()]);
-    this.visual.visible = this.overlaysVisible;
   }
 
   /** Removal region: the rectangle extruded CUT_PLANE_DEPTH meters behind the plane. */
@@ -536,7 +585,8 @@ export class CutPlaneElement extends CutElement {
     const { iu, iv, n, quat: q } = this.basis();
     center.copy(this.root.position).addScaledVector(n, -CUT_PLANE_DEPTH / 2);
     quat.copy(q);
-    half.set(this.extent.getComponent(iu) / 2, this.extent.getComponent(iv) / 2, CUT_PLANE_DEPTH / 2);
+    if (this.bounded) half.set(this.extent.getComponent(iu) / 2, this.extent.getComponent(iv) / 2, CUT_PLANE_DEPTH / 2);
+    else half.set(UNBOUNDED_HALF, UNBOUNDED_HALF, CUT_PLANE_DEPTH / 2);
   }
 }
 
@@ -582,14 +632,13 @@ export class CutBoxElement extends CutElement {
   }
 
   pickLines() {
-    return this.edges.visible ? [this.edges] : [];
+    return [this.edges];
   }
 
   protected updateAppearance() {
     const base = this.enabled ? BOX_COLOR : new THREE.Color(0x777777);
     this.edgeMat.color.copy(this.selected ? SELECT_COLOR : base);
     this.faceMat.color.copy(this.selected ? SELECT_COLOR : base);
-    this.edges.visible = this.faces.visible = this.overlaysVisible;
   }
 
   protected computeBox(center: THREE.Vector3, quat: THREE.Quaternion, half: THREE.Vector3) {

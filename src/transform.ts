@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { Editor } from "./editor";
 import { AXIS_COLORS, SceneElement } from "./elements";
-import { Viewport } from "./viewport";
+import type { View, Viewport } from "./viewport";
 import { toast } from "./ui/toast";
 
 export type TransformMode = "G" | "R" | "S";
@@ -32,15 +32,20 @@ export class TransformTool {
   private angle = 0;
   private lastMouseAngle = 0;
 
+  /** The view the transform was started in (its camera and pixel coordinates are used). */
+  view!: View;
+
   constructor(private vp: Viewport, private editor: Editor, private hud: HTMLElement) {}
 
-  begin(mode: TransformMode, mouse: THREE.Vector2) {
+  /** Mouse coordinates are view pixels. Switching mode mid-transform keeps the original view. */
+  begin(mode: TransformMode, mouse: THREE.Vector2, view: View = this.view) {
     const el = this.editor.selected;
     if (!el) return;
     if (mode === "R" && !el.canRotate) return toast(`${el.kind === "cutplane" ? "Cut-planes" : "This element"} can't be rotated`);
     if (mode === "S" && !el.canScale) return toast("Cameras can't be scaled");
-    this.vp.unlock();
+    view.unlock();
     if (!this.active) {
+      this.view = view;
       this.el = el;
       this.startPos.copy(el.root.position);
       this.startQuat.copy(el.root.quaternion);
@@ -56,7 +61,7 @@ export class TransformTool {
     this.mouse.copy(mouse);
     this.angle = 0;
     this.lastMouseAngle = this.mouseAngle(mouse);
-    this.vp.controls.enabled = false;
+    this.view.controls.enabled = false;
     this.apply();
   }
 
@@ -116,7 +121,7 @@ export class TransformTool {
   private finish() {
     this.active = false;
     this.el = null;
-    this.vp.controls.enabled = true;
+    this.view.controls.enabled = true;
     this.vp.constraintLine.visible = false;
     this.hud.classList.add("hidden");
     this.editor.emit("props");
@@ -138,7 +143,7 @@ export class TransformTool {
   }
 
   private mouseAngle(mouse: THREE.Vector2) {
-    const c = this.vp.worldToPixel(this.startPos);
+    const c = this.view.worldToPixel(this.startPos);
     return Math.atan2(-(mouse.y - c.y), mouse.x - c.x);
   }
 
@@ -158,7 +163,7 @@ export class TransformTool {
   private apply() {
     const el = this.el;
     if (!el) return;
-    const cam = this.vp.activeCam;
+    const cam = this.view.activeCam;
     cam.updateMatrixWorld();
     const p0 = this.startPos;
     const md = this.mouse.clone().sub(this.startMouse);
@@ -169,7 +174,7 @@ export class TransformTool {
 
     // Constraint line visualisation
     const line = this.vp.constraintLine;
-    line.visible = !!axis && this.editor.overlaysVisible;
+    line.visible = !!axis; // overlay layer: shown only in views with overlays on
     if (axis) {
       const pos = line.geometry.getAttribute("position") as THREE.BufferAttribute;
       const a = p0.clone().addScaledVector(axis, -1000), b = p0.clone().addScaledVector(axis, 1000);
@@ -190,9 +195,9 @@ export class TransformTool {
         if (num !== null) amount = num;
         else {
           // Project the mouse delta onto the axis' on-screen direction.
-          const unit = this.vp.worldPerPixel(p0) * 100;
-          const s0 = this.vp.worldToPixel(p0);
-          const s1 = this.vp.worldToPixel(p0.clone().addScaledVector(axis, unit));
+          const unit = this.view.worldPerPixel(p0) * 100;
+          const s0 = this.view.worldToPixel(p0);
+          const s1 = this.view.worldToPixel(p0.clone().addScaledVector(axis, unit));
           const sd = s1.sub(s0);
           const pxPerWorld = sd.length() / unit;
           amount = pxPerWorld > 1e-3 ? md.dot(sd.normalize()) / pxPerWorld : 0;
@@ -201,7 +206,7 @@ export class TransformTool {
         delta.copy(axis).multiplyScalar(amount);
         info = `${amount.toFixed(3)} m`;
       } else {
-        const wpp = this.vp.worldPerPixel(p0);
+        const wpp = this.view.worldPerPixel(p0);
         const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0).normalize();
         const up = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1).normalize();
         delta.addScaledVector(right, md.x * wpp).addScaledVector(up, -md.y * wpp);
@@ -212,7 +217,7 @@ export class TransformTool {
     } else if (this.mode === "R") {
       let angle = num !== null ? THREE.MathUtils.degToRad(num) : this.angle;
       if (num === null && this.snap) angle = THREE.MathUtils.degToRad(snapTo(THREE.MathUtils.radToDeg(angle), 5));
-      const toViewer = this.vp.isOrtho || cam.projectionMatrix.elements[11] !== -1
+      const toViewer = this.view.isOrtho || cam.projectionMatrix.elements[11] !== -1
         ? new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 2).normalize()
         : cam.position.clone().sub(p0).normalize();
       let rotAxis = toViewer;
@@ -226,7 +231,7 @@ export class TransformTool {
       el.root.quaternion.copy(q.multiply(this.startQuat));
       info = `${THREE.MathUtils.radToDeg(angle).toFixed(2)}°`;
     } else {
-      const c = this.vp.worldToPixel(p0);
+      const c = this.view.worldToPixel(p0);
       const d0 = Math.max(4, this.startMouse.distanceTo(c));
       let factor = num ?? this.mouse.distanceTo(c) / d0;
       if (num === null && this.precision) factor = 1 + (factor - 1) * 0.1;

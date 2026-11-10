@@ -10,7 +10,7 @@
     <div id="app">
       <main id="viewport">
         <canvas id="canvas"></canvas>
-        <div id="camera-frame" class="overlay-ui hidden"></div>
+        <div id="camera-frame" class="camera-frame overlay-ui hidden"></div>
         <div id="toolbar">
           <button id="btn-fullscreen" title="Fullscreen viewer (Esc to exit)">⛶ Fullscreen</button>
           <button id="btn-fly" title="WASD fly mode (W; Esc or left click to exit)">✈ WASD</button>
@@ -21,19 +21,49 @@
           <button id="btn-orbit-center" title="Set the orbit center to the surface at the viewport center (F: at the mouse cursor)">⊕ Orbit center</button>
           <button id="btn-depth" title="Depth view: color by distance to the camera, jet colormap (Z)">◐ Depth</button>
           <button id="btn-render" title="Render a clean PNG of the current view (from the camera's resolution when looking through a camera)">📷 Render PNG</button>
+          <button id="btn-minimap" title="Show / hide the minimap: a second, independent view (e.g. a camera preview)">▣ Minimap</button>
         </div>
-        <canvas id="axis-gizmo" class="overlay-ui" title="Click an axis to align the view"></canvas>
+        <canvas id="axis-gizmo" class="axis-gizmo overlay-ui" title="Click an axis to align the view"></canvas>
         <div id="hud" class="hidden"></div>
-        <div id="depth-legend" class="overlay-ui hidden">
-          <span id="depth-legend-min"></span>
-          <div id="depth-legend-bar"></div>
-          <span id="depth-legend-max"></span>
+        <div id="depth-legend" class="depth-legend overlay-ui hidden">
+          <span class="lo"></span>
+          <div class="bar"></div>
+          <span class="hi"></span>
         </div>
         <div id="view-label" class="overlay-ui hidden"></div>
         <div id="hints" class="overlay-ui">
           <b>LMB</b> orbit / select · <b>RMB / Shift+LMB</b> pan · <b>Wheel</b> zoom ·
           <b>G/R/S</b> move/rotate/scale (then <b>X/Y/Z</b>, twice = local) · <b>F</b> orbit around cursor ·
           <b>1/3/7</b> front/right/top (Ctrl/Shift = opposite) · <b>2/4/6/8</b> orbit · <b>.</b> frame · <b>Del</b> delete
+        </div>
+        <div id="minimap" class="hidden">
+          <div id="mm-surface"></div>
+          <div id="mm-frame" class="camera-frame overlay-ui hidden"></div>
+          <canvas id="mm-gizmo" class="axis-gizmo small overlay-ui" title="Click an axis to align the view"></canvas>
+          <div id="mm-legend" class="depth-legend overlay-ui hidden">
+            <span class="lo"></span>
+            <div class="bar"></div>
+            <span class="hi"></span>
+          </div>
+          <div class="mm-bar">
+            <button id="mm-menu-btn" title="Minimap view options">☰</button>
+            <span id="mm-label"></span>
+            <button id="mm-close" title="Hide minimap">✕</button>
+          </div>
+          <div id="mm-menu" class="hidden">
+            <button data-act="fullscreen">⛶ Fullscreen</button>
+            <button data-act="fly">✈ WASD fly</button>
+            <button data-act="overlays">◧ Overlays</button>
+            <button data-act="projection">Persp / Ortho</button>
+            <button data-act="iso">Iso</button>
+            <button data-act="frame">Frame selected</button>
+            <button data-act="orbit-center">⊕ Orbit center</button>
+            <button data-act="depth">◐ Depth</button>
+            <button data-act="render">📷 Render PNG</button>
+            <div class="mm-sep">Look from camera</div>
+            <div id="mm-cameras"></div>
+          </div>
+          <div id="mm-resize" title="Drag to resize the minimap"></div>
         </div>
         <div id="drop-hint" class="hidden">Drop .ply files to import</div>
       </main>

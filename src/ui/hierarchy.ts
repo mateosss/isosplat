@@ -73,7 +73,7 @@ export class HierarchyPanel {
         : `loading ${Math.round(el.loadProgress * 100)}%`;
       row.classList.toggle("disabled", !el.visible);
     } else if (el instanceof CutPlaneElement) {
-      meta.textContent = el.direction;
+      meta.textContent = el.bounded ? el.direction : `${el.direction} ∞`;
       row.classList.toggle("disabled", !el.enabled);
     } else if (el instanceof CutBoxElement) {
       row.classList.toggle("disabled", !el.enabled);

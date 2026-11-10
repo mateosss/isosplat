@@ -1,9 +1,9 @@
 import * as THREE from "three";
 import { SparkRenderer } from "@sparkjsdev/spark";
 import { Editor } from "./editor";
-import { CameraElement } from "./elements";
+import { CameraElement, SPLAT_LAYERS } from "./elements";
 import { updateDepthView } from "./depth";
-import { Viewport } from "./viewport";
+import type { View } from "./viewport";
 
 const MAX_TARGET = 8192; // Spark's limit for offline targets (including supersampling)
 
@@ -22,36 +22,34 @@ function cameraFromElement(cam: CameraElement, w: number, h: number) {
 }
 
 /**
- * Render a clean image (no overlays) to PNG.
+ * Render a clean image to PNG. Overlays live on their own layer, which the render
+ * camera does not see.
  * - With a camera: from that camera, at its resolution.
- * - Without: the current viewport (or the camera it is looking through) at screen resolution.
+ * - Without: the given view at its screen resolution.
  * Uses a dedicated offline Spark renderer: it sorts the splats for the render camera
  * and supersamples 2x when the size allows it.
  */
-/** While a PNG render is running, depth ranges are computed for its camera instead of the viewport's. */
-export let renderCamera: THREE.Camera | null = null;
-
-export async function renderPng(vp: Viewport, editor: Editor, cam: CameraElement | null) {
+export async function renderPng(view: View, editor: Editor, cam: CameraElement | null) {
   let w: number, h: number, camera: THREE.Camera;
   if (cam) {
     w = cam.width;
     h = cam.height;
     camera = cameraFromElement(cam, w, h);
   } else {
-    const pr = vp.renderer.getPixelRatio();
-    w = Math.round(vp.width * pr);
-    h = Math.round(vp.height * pr);
-    camera = vp.activeCam.clone();
+    const pr = view.vp.renderer.getPixelRatio();
+    w = Math.round(view.width * pr);
+    h = Math.round(view.height * pr);
+    camera = view.activeCam.clone();
     camera.updateMatrixWorld(true);
   }
+  // Scene objects + the main view's splat meshes; no overlays.
+  camera.layers.set(0);
+  camera.layers.enable(SPLAT_LAYERS[0]);
   if (w > MAX_TARGET || h > MAX_TARGET) throw new Error(`Render size ${w}×${h} exceeds ${MAX_TARGET}px`);
   const superXY = Math.max(w, h) * 2 <= MAX_TARGET ? 2 : 1;
 
-  const renderer = vp.renderer;
+  const renderer = view.vp.renderer;
   const scene = editor.scene;
-  const overlays = editor.overlaysVisible;
-  const helpersVisible = vp.helpers.visible;
-  const lineVisible = vp.constraintLine.visible;
   const clearAlpha = renderer.getClearAlpha();
   const transparent = editor.world.transparentRender;
   // Same precision settings as the live viewport (see Viewport.spark).
@@ -63,23 +61,17 @@ export async function renderPng(vp: Viewport, editor: Editor, cam: CameraElement
     target: { width: w, height: h, superXY },
   });
   try {
-    editor.setOverlaysVisible(false);
-    vp.helpers.visible = false;
-    vp.constraintLine.visible = false;
     renderer.setClearAlpha(transparent ? 0 : 1);
-    renderCamera = camera;
-    updateDepthView(editor, camera);
+    updateDepthView(editor, camera, 0, false);
     await offline.update({ scene, camera }); // sort splats for this viewpoint
-    renderer.setClearAlpha(transparent ? 0 : 1); // the live loop may render in between
+    // The live views render (and set their own depth ranges) while we wait: restore ours.
+    renderer.setClearAlpha(transparent ? 0 : 1);
+    updateDepthView(editor, camera, 0, false);
     const pixels = await offline.renderReadTarget({ scene, camera });
     return { blob: await toPng(pixels, w, h, transparent), width: w, height: h };
   } finally {
-    renderCamera = null;
     offline.dispose();
     renderer.setClearAlpha(clearAlpha);
-    editor.setOverlaysVisible(overlays);
-    vp.helpers.visible = helpersVisible;
-    vp.constraintLine.visible = lineVisible;
   }
 }
 

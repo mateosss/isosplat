@@ -47,7 +47,9 @@ type CutJson = ElementJsonBase & {
   direction: CutPlaneElement["direction"];
   /** Rectangle size along each world axis (the normal axis is ignored). */
   extent?: number[];
-  /** Older projects: square planes of this size. */
+  /** Only cut inside the rectangle (absent in older projects, whose planes were infinite). */
+  bounded?: boolean;
+  /** Older projects: display size of the (infinite) plane. */
   size?: number;
   enabled: boolean;
 };
@@ -57,18 +59,34 @@ type CutBoxJson = ElementJsonBase & {
 };
 type ElementJson = CameraJson | SplatJson | CutJson | CutBoxJson;
 
+/** Minimap (picture-in-picture view) state. */
+export interface MinimapJson {
+  visible: boolean;
+  width: number;
+  height: number;
+  /** Overlays of the main view. */
+  overlays: boolean;
+  view: ViewState;
+  minimap?: MinimapJson;
+}
+
 export interface ProjectJson {
   format: "isosplat";
   version: number;
   world: Editor["world"];
+  /** Overlays of the main view. */
   overlays: boolean;
   view: ViewState;
+  minimap?: MinimapJson;
   selected: number | null;
   elements: ElementJson[];
 }
 
 /** Build the project file. Splat data is referenced, not copied, so this is cheap even for huge scenes. */
-export function buildProject(editor: Editor, view: ViewState): { blob: Blob; json: ProjectJson } {
+export function buildProject(
+  editor: Editor,
+  views: { view: ViewState; overlays: boolean; minimap?: MinimapJson },
+): { blob: Blob; json: ProjectJson } {
   const parts: Blob[] = [];
   let offset = 0;
   const base = (e: SceneElement): ElementJsonBase => ({
@@ -93,14 +111,15 @@ export function buildProject(editor: Editor, view: ViewState): { blob: Blob; jso
     }
     if (e instanceof CutBoxElement) return { kind: "cutbox", ...base(e), enabled: e.enabled };
     const c = e as CutPlaneElement;
-    return { kind: "cutplane", ...base(c), direction: c.direction, extent: c.extent.toArray(), enabled: c.enabled };
+    return { kind: "cutplane", ...base(c), direction: c.direction, extent: c.extent.toArray(), bounded: c.bounded, enabled: c.enabled };
   });
   const json: ProjectJson = {
     format: "isosplat",
     version: VERSION,
     world: { ...editor.world },
-    overlays: editor.overlaysVisible,
-    view,
+    overlays: views.overlays,
+    view: views.view,
+    minimap: views.minimap,
     selected: editor.selected ? editor.elements.indexOf(editor.selected) : null,
     elements,
   };
@@ -160,6 +179,8 @@ export async function applyProject(editor: Editor, file: Blob) {
       applyPose(cut, j);
       const size = j.size ?? 10;
       cut.setScale(j.extent ? new THREE.Vector3().fromArray(j.extent) : new THREE.Vector3(size, size, size));
+      // Planes saved before rectangles existed cut infinitely: keep them looking the same.
+      cut.bounded = j.bounded ?? !!j.extent;
       cut.setEnabled(j.enabled);
       created.push(cut);
     } else if (j.kind === "cutbox") {

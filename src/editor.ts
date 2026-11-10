@@ -13,7 +13,6 @@ export class Editor {
   selected: SceneElement | null = null;
   /** The "World" row of the hierarchy is selected (selected is then null). */
   worldSelected = false;
-  overlaysVisible = true;
   readonly world = {
     background: "#3a3a3a",
     /** Render PNGs with a transparent background instead of the world color. */
@@ -56,7 +55,6 @@ export class Editor {
   add<T extends SceneElement>(el: T): T {
     this.elements.push(el);
     this.scene.add(el.root);
-    el.setOverlaysVisible(this.overlaysVisible);
     this.emit("elements");
     return el;
   }
@@ -95,17 +93,12 @@ export class Editor {
     this.emit("elements");
   }
 
-  setOverlaysVisible(v: boolean) {
-    this.overlaysVisible = v;
-    this.elements.forEach((e) => e.setOverlaysVisible(v));
-  }
-
   addCamera() {
     return this.add(new CameraElement(this.uniqueName("Camera")));
   }
 
-  addCutPlane(direction: CutDirection = "+Z", position = new THREE.Vector3()) {
-    const el = new CutPlaneElement(this.uniqueName("Cut-plane"), direction);
+  addCutPlane(direction: CutDirection = "+Z", position = new THREE.Vector3(), name = "Cut-plane") {
+    const el = new CutPlaneElement(this.uniqueName(name), direction);
     el.root.position.copy(position);
     return this.add(el);
   }
@@ -141,17 +134,26 @@ export class Editor {
   }
 
   /** The 6 default cut-planes enclosing a 10 x 10 x 10 m cube centered at the origin. */
+  /**
+   * The 6 default cut-planes enclosing a 10 x 10 x 10 m cube centered at the origin.
+   * They are unbounded so together they remove everything outside the cube (floaters
+   * included). Named after the side they cut, as seen from the front view (-Y).
+   */
   addDefaultCutPlanes(size = 10) {
     const h = size / 2;
-    const defs: [CutDirection, THREE.Vector3][] = [
-      ["+X", new THREE.Vector3(-h, 0, 0)],
-      ["-X", new THREE.Vector3(h, 0, 0)],
-      ["+Y", new THREE.Vector3(0, -h, 0)],
-      ["-Y", new THREE.Vector3(0, h, 0)],
-      ["+Z", new THREE.Vector3(0, 0, -h)],
-      ["-Z", new THREE.Vector3(0, 0, h)],
+    const defs: [string, CutDirection, THREE.Vector3][] = [
+      ["Left wall (−X)", "+X", new THREE.Vector3(-h, 0, 0)],
+      ["Right wall (+X)", "-X", new THREE.Vector3(h, 0, 0)],
+      ["Front wall (−Y)", "+Y", new THREE.Vector3(0, -h, 0)],
+      ["Back wall (+Y)", "-Y", new THREE.Vector3(0, h, 0)],
+      ["Floor (−Z)", "+Z", new THREE.Vector3(0, 0, -h)],
+      ["Ceiling (+Z)", "-Z", new THREE.Vector3(0, 0, h)],
     ];
-    for (const [d, p] of defs) this.addCutPlane(d, p).setScale(new THREE.Vector3(size, size, size));
+    for (const [name, d, p] of defs) {
+      const plane = this.addCutPlane(d, p, name);
+      plane.setScale(new THREE.Vector3(size, size, size));
+      plane.bounded = false;
+    }
   }
 
   /** All cut elements (planes and boxes). */

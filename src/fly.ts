@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { Viewport } from "./viewport";
+import type { View, Viewport } from "./viewport";
 
 /**
  * Shooter-style navigation: mouse look (pointer lock), WASD to move, Q/E down/up,
@@ -12,6 +12,8 @@ export class FlyMode {
   private yaw = 0;
   private pitch = 0;
   private orbitDistance = 5;
+  /** The view being flown (main viewport or minimap). */
+  view: View | null = null;
   onChange: () => void = () => {};
 
   constructor(private vp: Viewport, private hud: HTMLElement) {
@@ -37,16 +39,17 @@ export class FlyMode {
     );
   }
 
-  enter() {
+  enter(view: View) {
     if (this.active) return;
-    this.vp.unlock();
+    this.view = view;
+    view.unlock();
     this.active = true;
-    this.vp.controls.enabled = false;
-    const cam = this.vp.activeCam;
+    view.controls.enabled = false;
+    const cam = view.activeCam;
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
     this.yaw = Math.atan2(fwd.y, fwd.x);
     this.pitch = Math.asin(THREE.MathUtils.clamp(fwd.z, -1, 1));
-    this.orbitDistance = Math.max(1, cam.position.distanceTo(this.vp.controls.target));
+    this.orbitDistance = Math.max(1, cam.position.distanceTo(view.controls.target));
     this.keys.clear();
     const req = this.vp.canvas.requestPointerLock() as unknown as Promise<void> | undefined;
     req?.catch?.(() => {
@@ -57,14 +60,15 @@ export class FlyMode {
   }
 
   exit() {
-    if (!this.active) return;
+    if (!this.active || !this.view) return;
+    const view = this.view;
     this.active = false;
     if (document.pointerLockElement === this.vp.canvas) document.exitPointerLock();
-    const cam = this.vp.activeCam;
+    const cam = view.activeCam;
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
-    this.vp.controls.target.copy(cam.position).addScaledVector(fwd, this.orbitDistance);
-    this.vp.controls.enabled = true;
-    this.vp.controls.update();
+    view.controls.target.copy(cam.position).addScaledVector(fwd, this.orbitDistance);
+    view.controls.enabled = true;
+    view.controls.update();
     this.hud.classList.add("hidden");
     this.onChange();
   }
@@ -81,8 +85,8 @@ export class FlyMode {
   }
 
   update(dt: number) {
-    if (!this.active) return;
-    const cam = this.vp.activeCam;
+    if (!this.active || !this.view) return;
+    const cam = this.view.activeCam;
     const fwd = new THREE.Vector3(
       Math.cos(this.pitch) * Math.cos(this.yaw),
       Math.cos(this.pitch) * Math.sin(this.yaw),

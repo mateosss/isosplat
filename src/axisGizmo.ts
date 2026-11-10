@@ -25,6 +25,9 @@ export class AxisGizmo {
   }
 
   draw(camera: THREE.Camera) {
+    // Size follows the element (the minimap uses a smaller gizmo).
+    this.size = this.canvas.clientWidth || 100;
+    this.radius = this.size < 80 ? 7 : 9;
     const dpr = window.devicePixelRatio || 1;
     const px = Math.round(this.size * dpr);
     if (this.canvas.width !== px) this.canvas.width = this.canvas.height = px;
@@ -49,7 +52,7 @@ export class AxisGizmo {
     }
     items.sort((a, b) => a.v.z - b.v.z); // back to front
     this.bubbles = [];
-    ctx.font = "bold 11px system-ui, sans-serif";
+    ctx.font = `bold ${this.size < 80 ? 9 : 11}px system-ui, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     for (const it of items) {

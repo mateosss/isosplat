@@ -75,7 +75,14 @@ in their shader.
   overlays, splats sorted for the render camera, with 2× supersampling. From a camera it uses the
   camera's resolution; from the free view it uses the viewport's pixel size.
 - **Cuts**: cut-planes (+ Cut) remove what is behind them within their rectangle (resize with S);
-  cut-boxes (+ Box) remove everything inside them (move / rotate / scale with G / R / S).
+  uncheck **Bounded** to cut the whole half-space behind the plane instead (handy for far-away
+  floaters; the six default planes and projects saved before rectangles existed are unbounded). Cut-boxes (+ Box) remove
+  everything inside them (move / rotate / scale with G / R / S).
+- **Minimap** (▣ Minimap, or "Preview in minimap" on a camera): a second, resizable view in the
+  corner (drag its top-left corner). It works like the main view (orbit, click to select, G/R/S,
+  numpad keys, F, W fly…: keys act on the view under the mouse) with its options in its ☰ menu,
+  including its own overlays toggle and "look from camera". Typical use: keep a clean camera
+  preview while editing cuts in the main view.
 - **World** (top of the hierarchy): background color, and an option to render PNGs with a
   transparent background.
 - **Depth view** colors gaussians and point clouds by their depth along the camera's view axis with
