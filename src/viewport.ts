@@ -23,6 +23,12 @@ const PICK_PIXELS = 6;
  */
 export class Viewport {
   readonly renderer: THREE.WebGLRenderer;
+  /**
+   * Spark renderer. `accumExtSplats` keeps the per-frame splat buffer in world space with
+   * float32 centers. The default packs centers as float16 relative to the camera position,
+   * which is fine for nearby perspective cameras but quantizes to ~6 cm when an orthographic
+   * camera sits far away (the free ortho view is 200 m back), making gaussians jitter.
+   */
   readonly spark: SparkRenderer;
   readonly perspCam = new THREE.PerspectiveCamera(50, 1, 0.02, 2000);
   readonly orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.02, 4000);
@@ -62,7 +68,7 @@ export class Viewport {
     this.renderer.localClippingEnabled = true;
     this.renderer.setClearColor(0x3a3a3a);
 
-    this.spark = new SparkRenderer({ renderer: this.renderer });
+    this.spark = new SparkRenderer({ renderer: this.renderer, accumExtSplats: true });
     editor.scene.add(this.spark);
 
     for (const cam of [this.perspCam, this.orthoCam]) cam.up.copy(UP);
@@ -316,6 +322,8 @@ export class Viewport {
 
   update() {
     this.stepAnim();
+    // Parallel rays: sort by depth along the view axis, not by distance to the camera point.
+    this.spark.sortRadial = !this.isOrtho;
     if (this.lockedCamera) {
       if (!this.editor.elements.includes(this.lockedCamera)) this.unlock();
       else this.applyLock();

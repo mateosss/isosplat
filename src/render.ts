@@ -54,7 +54,14 @@ export async function renderPng(vp: Viewport, editor: Editor, cam: CameraElement
   const lineVisible = vp.constraintLine.visible;
   const clearAlpha = renderer.getClearAlpha();
   const transparent = editor.world.transparentRender;
-  const offline = new SparkRenderer({ renderer, autoUpdate: false, target: { width: w, height: h, superXY } });
+  // Same precision settings as the live viewport (see Viewport.spark).
+  const offline = new SparkRenderer({
+    renderer,
+    autoUpdate: false,
+    accumExtSplats: true,
+    sortRadial: !(camera as THREE.OrthographicCamera).isOrthographicCamera,
+    target: { width: w, height: h, superXY },
+  });
   try {
     editor.setOverlaysVisible(false);
     vp.helpers.visible = false;
