@@ -133,13 +133,14 @@ export class Editor {
     return el;
   }
 
-  /** The 6 default cut-planes enclosing a 10 x 10 x 10 m cube centered at the origin. */
   /**
-   * The 6 default cut-planes enclosing a 10 x 10 x 10 m cube centered at the origin.
+   * The 6 default cut-planes enclosing a `size` m cube centered at the origin.
    * They are unbounded so together they remove everything outside the cube (floaters
    * included). Named after the side they cut, as seen from the front view (-Y).
+   * Their rectangles (`planeSize`, display only while unbounded) are a bit smaller than
+   * the cube so neighbouring borders don't touch.
    */
-  addDefaultCutPlanes(size = 10) {
+  addDefaultCutPlanes(size = 10, planeSize = 9) {
     const h = size / 2;
     const defs: [string, CutDirection, THREE.Vector3][] = [
       ["Left wall (−X)", "+X", new THREE.Vector3(-h, 0, 0)],
@@ -151,7 +152,7 @@ export class Editor {
     ];
     for (const [name, d, p] of defs) {
       const plane = this.addCutPlane(d, p, name);
-      plane.setScale(new THREE.Vector3(size, size, size));
+      plane.setScale(new THREE.Vector3(planeSize, planeSize, planeSize));
       plane.bounded = false;
     }
   }
