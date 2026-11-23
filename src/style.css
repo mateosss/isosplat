@@ -266,6 +266,8 @@ button:disabled { opacity: 0.4; cursor: default; }
 .title-row .project-actions { margin: 0 0 0 auto; flex-wrap: nowrap; }
 .h-item.world { padding-left: 10px; }
 .badge.world { background: #4a4a4a; }
+.color-field { display: flex; gap: 4px; align-items: center; }
+.p-row input.hex { width: 84px; font-family: ui-monospace, "Fira Code", monospace; }
 .p-row input[type="color"] { width: 48px; height: 24px; padding: 0 2px; background: #1f1f1f; border: 1px solid var(--border); border-radius: 3px; }
 .swatches { display: flex; gap: 4px; flex-wrap: wrap; }
 .swatches button { width: 20px; height: 20px; padding: 0; border-radius: 3px; }

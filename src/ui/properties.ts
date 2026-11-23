@@ -14,6 +14,13 @@ interface TransformCopy {
 /** Last copied transform, for when the system clipboard can't be read (permissions, file://). */
 let copiedTransform: TransformCopy | null = null;
 
+/** "#rrggbb", "rrggbb", "#rgb" or "rgb" (any case) -> "#rrggbb"; null if invalid. */
+function parseHex(text: string) {
+  let h = text.trim().replace(/^#/, "").toLowerCase();
+  if (/^[0-9a-f]{3}$/.test(h)) h = h.replace(/./g, "$&$&");
+  return /^[0-9a-f]{6}$/.test(h) ? `#${h}` : null;
+}
+
 function parseTransform(text: string): TransformCopy | null {
   try {
     const j = JSON.parse(text);
@@ -217,11 +224,7 @@ export class PropertiesPanel {
       this.vp.setBackground(c);
       this.editor.emit("props");
     };
-    const color = document.createElement("input");
-    color.type = "color";
-    color.value = w.background;
-    color.addEventListener("input", () => apply(color.value));
-    this.bindings.push({ sync: () => void (color.value !== w.background && (color.value = w.background)) });
+    const color = this.color(() => w.background, apply);
     const swatches = document.createElement("div");
     swatches.className = "swatches";
     for (const c of ["#3a3a3a", "#1d1d1d", "#000000", "#ffffff", "#e8e4dc", "#c9d6e3", "#2b3a4a"]) {
@@ -404,13 +407,37 @@ export class PropertiesPanel {
 
   // ----------------------------------------------------------- widgets
 
+  /** Color swatch (opens the picker) and a hex field (#rrggbb; #rgb and a missing # are accepted). */
   private color(get: () => string, set: (v: string) => void) {
-    const input = document.createElement("input");
-    input.type = "color";
-    input.value = get();
-    input.addEventListener("input", () => set(input.value));
-    this.bindings.push({ sync: () => void (document.activeElement !== input && input.value !== get() && (input.value = get())) });
-    return input;
+    const wrap = document.createElement("div");
+    wrap.className = "color-field";
+    const picker = document.createElement("input");
+    picker.type = "color";
+    picker.value = get();
+    picker.addEventListener("input", () => set(picker.value));
+    const hex = document.createElement("input");
+    hex.type = "text";
+    hex.className = "hex";
+    hex.spellcheck = false;
+    hex.value = get();
+    hex.addEventListener("change", () => {
+      const v = parseHex(hex.value);
+      if (v) set(v);
+      hex.value = get();
+    });
+    hex.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") hex.blur();
+      e.stopPropagation();
+    });
+    this.bindings.push({
+      sync: () => {
+        const v = get();
+        if (document.activeElement !== picker && picker.value !== v) picker.value = v;
+        if (document.activeElement !== hex && hex.value !== v) hex.value = v;
+      },
+    });
+    wrap.append(picker, hex);
+    return wrap;
   }
 
   private select(options: [string, string][], get: () => string, set: (v: string) => void) {
