@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { SplatEdit, SplatEditRgbaBlendMode } from "@sparkjsdev/spark";
 import { CameraElement, CutBoxElement, CutElement, CutPlaneElement, type CutDirection, SceneElement, SplatElement } from "./elements";
 import { MAX_POINT_CUTS, pointCutUniforms } from "./cuts";
+import { parseTrajectory, TrajectoryElement } from "./trajectory";
 
 type EventName = "elements" | "selection" | "props";
 type Listener = () => void;
@@ -133,6 +134,15 @@ export class Editor {
     return el;
   }
 
+  /** Load a camera trajectory (TUM or EuRoC CSV) from a Blob. Parented to the only splat, if there is one. */
+  async importTrajectoryBlob(source: Blob, fileName: string) {
+    const poses = parseTrajectory(await source.text());
+    const el = new TrajectoryElement(this.uniqueName(fileName.replace(/\.[^.]+$/, "")), poses, fileName, source);
+    const splats = this.splats();
+    if (splats.length === 1) el.parent = splats[0];
+    return this.add(el);
+  }
+
   /**
    * The 6 default cut-planes enclosing a `size` m cube centered at the origin.
    * They are unbounded so together they remove everything outside the cube (floaters
@@ -176,6 +186,16 @@ export class Editor {
 
   cameras() {
     return this.elements.filter((e): e is CameraElement => e instanceof CameraElement);
+  }
+
+  trajectories() {
+    return this.elements.filter((e): e is TrajectoryElement => e instanceof TrajectoryElement);
+  }
+
+  /** Called every frame: trajectories follow their parent splats. */
+  updateTrajectories() {
+    const splats = this.splats();
+    for (const t of this.trajectories()) t.syncParent(splats);
   }
 
   /** Called every frame: sync cut poses into the Spark edit and the point-cloud uniforms. */

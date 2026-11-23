@@ -1,11 +1,13 @@
 import { Editor } from "../editor";
 import { CutBoxElement, CutPlaneElement, type ElementKind, SceneElement, SplatElement } from "../elements";
+import { TrajectoryElement } from "../trajectory";
 
 const GROUPS: { kind: ElementKind; title: string; badge: string }[] = [
   { kind: "camera", title: "Cameras", badge: "CAM" },
   { kind: "splat", title: "3DGS scenes", badge: "3DGS" },
   { kind: "cutplane", title: "Cut-planes", badge: "CUT" },
   { kind: "cutbox", title: "Cut-boxes", badge: "BOX" },
+  { kind: "trajectory", title: "Trajectories", badge: "TRAJ" },
 ];
 
 export class HierarchyPanel {
@@ -78,6 +80,9 @@ export class HierarchyPanel {
     } else if (el instanceof CutBoxElement) {
       meta.textContent = el.invert ? "remove inside" : "keep inside";
       row.classList.toggle("disabled", !el.enabled);
+    } else if (el instanceof TrajectoryElement) {
+      meta.textContent = `${el.count} poses`;
+      row.classList.toggle("disabled", !el.visible);
     }
     row.append(badge, name, meta);
     row.addEventListener("click", () => this.editor.select(el));

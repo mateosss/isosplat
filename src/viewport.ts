@@ -4,6 +4,7 @@ import { SparkRenderer } from "@sparkjsdev/spark";
 import { Editor } from "./editor";
 import { AXIS_COLORS, CameraElement, OVERLAY_LAYER, SPLAT_LAYERS, SceneElement, SplatElement } from "./elements";
 import { updateDepthView } from "./depth";
+import { setLineResolution, TrajectoryElement } from "./trajectory";
 
 const UP = new THREE.Vector3(0, 0, 1);
 
@@ -339,6 +340,10 @@ export class View {
       const box = el.bounds.clone().applyMatrix4(el.root.matrixWorld);
       center = box.getCenter(new THREE.Vector3());
       radius = Math.max(0.5, box.getSize(new THREE.Vector3()).length() / 2);
+    } else if (el instanceof TrajectoryElement && !el.worldBounds().isEmpty()) {
+      const box = el.worldBounds();
+      center = box.getCenter(new THREE.Vector3());
+      radius = Math.max(0.5, box.getSize(new THREE.Vector3()).length() / 2);
     } else if (el) {
       center = el.root.getWorldPosition(new THREE.Vector3());
       radius = el.kind === "cutplane" || el.kind === "cutbox" ? 3 : 1.5;
@@ -438,6 +443,7 @@ export class View {
     const hidden = this.lockedCamera;
     hidden?.setGizmoVisible(false);
     if (this.spark) SparkRenderer.sparkOverride = this.spark;
+    setLineResolution(this.rect.w, this.rect.h); // fat-line widths are in pixels of this view
     try {
       r.render(this.editor.scene, cam);
     } finally {

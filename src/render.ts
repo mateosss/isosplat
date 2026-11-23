@@ -4,6 +4,7 @@ import { Editor } from "./editor";
 import { CameraElement, SPLAT_LAYERS } from "./elements";
 import { updateDepthView } from "./depth";
 import type { View } from "./viewport";
+import { setLineResolution } from "./trajectory";
 
 const MAX_TARGET = 8192; // Spark's limit for offline targets (including supersampling)
 
@@ -63,10 +64,13 @@ export async function renderPng(view: View, editor: Editor, cam: CameraElement |
   try {
     renderer.setClearAlpha(transparent ? 0 : 1);
     updateDepthView(editor, camera, 0, false);
+    // Fat-line widths are in pixels of the output image (not of the supersampled target).
+    setLineResolution(w, h);
     await offline.update({ scene, camera }); // sort splats for this viewpoint
     // The live views render (and set their own depth ranges) while we wait: restore ours.
     renderer.setClearAlpha(transparent ? 0 : 1);
     updateDepthView(editor, camera, 0, false);
+    setLineResolution(w, h);
     const pixels = await offline.renderReadTarget({ scene, camera });
     return { blob: await toPng(pixels, w, h, transparent), width: w, height: h };
   } finally {

@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { Editor } from "../editor";
 import { AXIS_LETTERS, CameraElement, CutBoxElement, CUT_DIRECTIONS, CutPlaneElement, SceneElement, SplatElement } from "../elements";
 import type { View, Viewport } from "../viewport";
+import { TrajectoryElement } from "../trajectory";
 
 type Binding = { sync: () => void };
 
@@ -53,6 +54,7 @@ export class PropertiesPanel {
     if (el instanceof SplatElement) this.splatSection(el);
     if (el instanceof CutPlaneElement) this.cutSection(el);
     if (el instanceof CutBoxElement) this.cutBoxSection(el);
+    if (el instanceof TrajectoryElement) this.trajectorySection(el);
   }
 
   // ----------------------------------------------------------- sections
@@ -283,7 +285,83 @@ export class PropertiesPanel {
     ));
   }
 
+  private trajectorySection(tr: TrajectoryElement) {
+    const changed = (fn: () => void) => () => {
+      fn();
+      tr.rebuild();
+    };
+    const s = this.section("Trajectory");
+    const info = document.createElement("span");
+    info.className = "value";
+    info.textContent = `${tr.count.toLocaleString()} poses · ${tr.duration.toFixed(2)} s · ${tr.poses.format === "tum" ? "TUM" : "EuRoC"}`;
+    s.append(this.row("Info", info));
+    const splats = this.editor.splats();
+    s.append(this.row("Parent splat", this.select(
+      [["", "None (world)"], ...splats.map((sp) => [String(sp.id), sp.name] as [string, string])],
+      () => (tr.parent ? String(tr.parent.id) : ""),
+      (v) => (tr.parent = splats.find((sp) => String(sp.id) === v) ?? null),
+    )));
+    s.append(this.note("With a parent, the poses are in the splat's frame and follow its transform; this element's own transform is applied on top."));
+    s.append(this.row("Visible", this.checkbox(() => tr.visible, (v) => {
+      tr.setVisible(v);
+      this.editor.emit("props");
+    })));
+    s.append(this.row("Trim (s)",
+      this.number(() => tr.start, (v) => changed(() => (tr.start = THREE.MathUtils.clamp(v, 0, tr.end)))(), { tag: "t0", step: 0.1 }),
+      this.number(() => tr.end, (v) => changed(() => (tr.end = THREE.MathUtils.clamp(v, tr.start, tr.duration)))(), { tag: "t1", step: 0.1 }),
+    ));
+    s.append(this.note(`Seconds from the first pose (0 – ${tr.duration.toFixed(2)} s).`));
+
+    const c = this.section("Cameras & path");
+    c.append(this.row("Cameras",
+      this.number(() => tr.cameraCount, (v) => changed(() => (tr.cameraCount = Math.max(0, Math.round(v))))(), { step: 1 })));
+    c.append(this.row("Frustum size (m)",
+      this.number(() => tr.frustumSize, (v) => changed(() => (tr.frustumSize = Math.max(0.001, v)))(), { step: 0.01 })));
+    c.append(this.row("Frustum color",
+      this.color(() => tr.frustumColor, (v) => changed(() => (tr.frustumColor = v))()),
+      this.number(() => tr.frustumOpacity, (v) => changed(() => (tr.frustumOpacity = THREE.MathUtils.clamp(v, 0, 1)))(), { tag: "a", step: 0.05 })));
+    c.append(this.row("Dot radius (m)",
+      this.number(() => tr.dotRadius, (v) => changed(() => (tr.dotRadius = Math.max(0, v)))(), { step: 0.005 })));
+    c.append(this.row("Line width (px)",
+      this.number(() => tr.lineWidth, (v) => changed(() => (tr.lineWidth = Math.max(0.1, v)))(), { step: 0.5 })));
+    c.append(this.row("Path", this.checkbox(() => tr.showPath, (v) => changed(() => (tr.showPath = v))())),);
+    c.append(this.row("Path color",
+      this.color(() => tr.pathColor, (v) => changed(() => (tr.pathColor = v))()),
+      this.number(() => tr.pathOpacity, (v) => changed(() => (tr.pathOpacity = THREE.MathUtils.clamp(v, 0, 1)))(), { tag: "a", step: 0.05 })));
+    c.append(this.row("Draw on top", this.checkbox(() => tr.onTop, (v) => changed(() => (tr.onTop = v))())));
+    c.append(this.note(
+      "Frustums are spread evenly by distance along the trimmed path, first and last pose included. " +
+      "They look along the pose's +Z axis with −Y up (OpenCV). The dot marks the camera center (radius 0 hides it). " +
+      "A is the opacity (0–1) of the frustums and their dots, and of the path; " +
+      "below 1 they are drawn over the gaussians (splats can't hide translucent lines). " +
+      "Line widths are in pixels of the view or of the rendered PNG. " +
+      "Draw on top shows it over the gaussians instead of hidden by those in front of it.",
+    ));
+    const buttons = document.createElement("div");
+    buttons.className = "p-buttons";
+    buttons.append(this.button("Frame in view", () => this.view.frame(tr)));
+    c.append(buttons);
+  }
+
   // ----------------------------------------------------------- widgets
+
+  private color(get: () => string, set: (v: string) => void) {
+    const input = document.createElement("input");
+    input.type = "color";
+    input.value = get();
+    input.addEventListener("input", () => set(input.value));
+    this.bindings.push({ sync: () => void (document.activeElement !== input && input.value !== get() && (input.value = get())) });
+    return input;
+  }
+
+  private select(options: [string, string][], get: () => string, set: (v: string) => void) {
+    const sel = document.createElement("select");
+    for (const [value, label] of options) sel.append(new Option(label, value));
+    sel.value = get();
+    sel.addEventListener("change", () => set(sel.value));
+    this.bindings.push({ sync: () => void (document.activeElement !== sel && sel.value !== get() && (sel.value = get())) });
+    return sel;
+  }
 
   private section(title: string) {
     const s = document.createElement("div");

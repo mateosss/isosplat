@@ -13,6 +13,7 @@ import { renderPng } from "./render";
 import { JET_CSS } from "./depth";
 import { PROJECT_EXTENSION, applyProject, buildProject, rebindSources } from "./project";
 import { isAbort, openFile, saveBlob } from "./ui/files";
+import { TRAJECTORY_EXTENSIONS } from "./trajectory";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -233,6 +234,18 @@ function deleteSelected() {
 
 async function importFiles(files: File[]) {
   for (const file of files) {
+    if (TRAJECTORY_EXTENSIONS.test(file.name)) {
+      try {
+        const el = await editor.importTrajectoryBlob(file, file.name);
+        editor.select(el);
+        const parent = el.parent ? `, attached to ${el.parent.name}` : "";
+        toast(`Loaded ${file.name} (${el.count} poses, ${el.duration.toFixed(1)} s${parent})`);
+      } catch (err) {
+        console.error(err);
+        toast(`Failed to load ${file.name}: ${(err as Error).message ?? err}`, 5000);
+      }
+      continue;
+    }
     if (!/\.(ply|spz|splat|ksplat|sog)$/i.test(file.name)) {
       toast(`Unsupported file: ${file.name}`);
       continue;
@@ -563,6 +576,7 @@ function tick(time: number) {
     v.update();
   }
   editor.updateCuts();
+  editor.updateTrajectories();
   updateDepthLegends();
   for (const [v, g] of gizmos) if (v.visible && v.overlays) g.draw(v.activeCam);
   props.sync();

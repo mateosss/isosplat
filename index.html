@@ -65,7 +65,7 @@
           </div>
           <div id="mm-resize" title="Drag to resize the minimap"></div>
         </div>
-        <div id="drop-hint" class="hidden">Drop .ply files to import</div>
+        <div id="drop-hint" class="hidden">Drop splat (.ply…) or trajectory (.tum, .txt, .csv) files to import</div>
       </main>
       <aside id="sidebar">
         <section id="hierarchy" class="panel">
@@ -80,7 +80,7 @@
               </div>
             </div>
             <div class="actions">
-              <button id="btn-import" title="Import a .ply gaussian splat">Import PLY</button>
+              <button id="btn-import" title="Import a gaussian splat (.ply, .spz…) or a camera trajectory (TUM .txt/.tum, EuRoC .csv)">Import</button>
               <button id="btn-add-camera" title="Add a camera at the current view">+ Camera</button>
               <button id="btn-add-cut" title="Add a cut-plane">+ Cut</button>
               <button id="btn-add-box" title="Add a cut-box: keeps only what is inside it (or, inverted, removes its inside)">+ Box</button>
@@ -88,7 +88,7 @@
             </div>
           </header>
           <div id="hierarchy-list" class="panel-body"></div>
-          <input id="file-input" type="file" accept=".ply,.spz,.splat,.ksplat,.sog" multiple hidden />
+          <input id="file-input" type="file" accept=".ply,.spz,.splat,.ksplat,.sog,.tum,.txt,.csv" multiple hidden />
           <input id="project-input" type="file" accept=".isosplat" hidden />
         </section>
         <section id="properties" class="panel">

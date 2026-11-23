@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { Editor } from "./editor";
 import { CameraElement, CutBoxElement, CutPlaneElement, SceneElement, SplatElement } from "./elements";
 import type { ViewState } from "./viewport";
+import { TrajectoryElement } from "./trajectory";
 
 /*
  * .isosplat project file — a self-contained binary container:
@@ -10,8 +11,8 @@ import type { ViewState } from "./viewport";
  *   bytes 8..11   uint32 LE  format version
  *   bytes 12..15  uint32 LE  JSON length (bytes)
  *   then          JSON (UTF-8), see ProjectJson
- *   then          the original splat files, concatenated; each splat entry in the
- *                 JSON has { offset, length } relative to the end of the JSON.
+ *   then          the original splat and trajectory files, concatenated; each such
+ *                 entry in the JSON has { offset, length } relative to the end of the JSON.
  *
  * Splat files are embedded unchanged (.ply, .spz, …), so they can be extracted
  * again with any tool: `tail -c +$((16 + jsonLength + offset + 1)) | head -c length`.
@@ -59,7 +60,27 @@ type CutBoxJson = ElementJsonBase & {
   /** Remove the inside instead of the outside (absent in older projects, whose boxes removed their inside). */
   invert?: boolean;
 };
-type ElementJson = CameraJson | SplatJson | CutJson | CutBoxJson;
+type TrajectoryJson = ElementJsonBase & {
+  kind: "trajectory";
+  fileName: string;
+  data: { offset: number; length: number };
+  /** Index of the parent splat in `elements`, or null. */
+  parent: number | null;
+  visible: boolean;
+  start: number;
+  end: number;
+  cameraCount: number;
+  frustumSize: number;
+  frustumColor: string;
+  pathColor: string;
+  showPath: boolean;
+  lineWidth: number;
+  dotRadius: number;
+  onTop?: boolean;
+  frustumOpacity?: number;
+  pathOpacity?: number;
+};
+type ElementJson = CameraJson | SplatJson | CutJson | CutBoxJson | TrajectoryJson;
 
 /** Minimap (picture-in-picture view) state. */
 export interface MinimapJson {
@@ -112,6 +133,17 @@ export function buildProject(
       };
     }
     if (e instanceof CutBoxElement) return { kind: "cutbox", ...base(e), enabled: e.enabled, invert: e.invert };
+    if (e instanceof TrajectoryElement) {
+      const data = { offset, length: e.source.size };
+      parts.push(e.source);
+      offset += e.source.size;
+      const { visible, start, end, cameraCount, frustumSize, frustumColor, pathColor, showPath, lineWidth, dotRadius, onTop, frustumOpacity, pathOpacity } = e;
+      const parent = e.parent ? editor.elements.indexOf(e.parent) : -1;
+      return {
+        kind: "trajectory", ...base(e), fileName: e.fileName, data, parent: parent >= 0 ? parent : null,
+        visible, start, end, cameraCount, frustumSize, frustumColor, pathColor, showPath, lineWidth, dotRadius, onTop, frustumOpacity, pathOpacity,
+      };
+    }
     const c = e as CutPlaneElement;
     return { kind: "cutplane", ...base(c), direction: c.direction, extent: c.extent.toArray(), bounded: c.bounded, enabled: c.enabled };
   });
@@ -166,6 +198,8 @@ export async function applyProject(editor: Editor, file: Blob) {
 
   const created: (SceneElement | null)[] = [];
   const loads: Promise<unknown>[] = [];
+  /** Trajectories and the index of their parent splat, resolved once everything has loaded. */
+  const parents: [TrajectoryElement, number | null][] = [];
   for (const j of json.elements) {
     if (j.kind === "camera") {
       const cam = editor.addCamera();
@@ -203,6 +237,20 @@ export async function applyProject(editor: Editor, file: Blob) {
           created[index] = el;
         }).then((el) => el.setRenderMode(j.renderMode)),
       );
+    } else if (j.kind === "trajectory") {
+      const index = created.length;
+      created.push(null);
+      loads.push(
+        editor.importTrajectoryBlob(slice(j.data), j.fileName).then((el) => {
+          applyPose(el, j);
+          const { start, end, cameraCount, frustumSize, frustumColor, pathColor, showPath, lineWidth, dotRadius } = j;
+          Object.assign(el, { start, end, cameraCount, frustumSize, frustumColor, pathColor, showPath, lineWidth, dotRadius,
+            onTop: j.onTop ?? false, frustumOpacity: j.frustumOpacity ?? 1, pathOpacity: j.pathOpacity ?? 1 });
+          el.setVisible(j.visible);
+          created[index] = el;
+          parents.push([el, j.parent]);
+        }),
+      );
     }
   }
   editor.emit("elements");
@@ -211,6 +259,11 @@ export async function applyProject(editor: Editor, file: Blob) {
     const order = created.filter((e): e is SceneElement => !!e && editor.elements.includes(e));
     const rest = editor.elements.filter((e) => !order.includes(e));
     editor.elements.splice(0, editor.elements.length, ...order, ...rest);
+    for (const [el, p] of parents) {
+      const parent = p === null ? null : created[p];
+      el.parent = parent instanceof SplatElement ? parent : null;
+      el.rebuild();
+    }
     if (json.selected !== null && created[json.selected]) editor.select(created[json.selected]);
     editor.emit("elements");
   });
@@ -220,13 +273,11 @@ export async function applyProject(editor: Editor, file: Blob) {
 /** Repoint splat sources at a freshly written project file (the old File snapshot may become unreadable). */
 export async function rebindSources(editor: Editor, file: Blob) {
   const { json: written, slice } = await readProject(file);
-  {
-    const splats = editor.splats();
-    let i = 0;
-    for (const j of written.elements) {
-      if (j.kind !== "splat") continue;
-      const el = splats[i++];
-      if (el) el.source = slice(j.data);
+  // Elements were written in editor order.
+  written.elements.forEach((j, i) => {
+    const el = editor.elements[i];
+    if ((j.kind === "splat" && el instanceof SplatElement) || (j.kind === "trajectory" && el instanceof TrajectoryElement)) {
+      el.source = slice(j.data);
     }
-  }
+  });
 }

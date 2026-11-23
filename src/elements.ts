@@ -19,7 +19,7 @@ export const OVERLAY_LAYER = 1;
  */
 export const SPLAT_LAYERS = [2, 3];
 
-export type ElementKind = "camera" | "splat" | "cutplane" | "cutbox";
+export type ElementKind = "camera" | "splat" | "cutplane" | "cutbox" | "trajectory";
 
 let nextId = 1;
 
