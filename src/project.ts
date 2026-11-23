@@ -109,7 +109,7 @@ export interface ProjectJson {
 export function buildProject(
   editor: Editor,
   views: { view: ViewState; overlays: boolean; minimap?: MinimapJson },
-): { blob: Blob; json: ProjectJson } {
+): { blob: Blob; json: ProjectJson; elements: SceneElement[] } {
   const parts: Blob[] = [];
   let offset = 0;
   const base = (e: SceneElement): ElementJsonBase => ({
@@ -163,7 +163,9 @@ export function buildProject(
   const dv = new DataView(header.buffer);
   dv.setUint32(8, VERSION, true);
   dv.setUint32(12, jsonBytes.length, true);
-  return { blob: new Blob([header, jsonBytes, ...parts], { type: "application/octet-stream" }), json };
+  const blob = new Blob([header, jsonBytes, ...parts], { type: "application/octet-stream" });
+  // The elements in the order they were written, for rebindSources.
+  return { blob, json, elements: editor.elements.slice() };
 }
 
 /** Parse a project file; splat data is returned as lazy slices of the file. */
@@ -271,13 +273,31 @@ export async function applyProject(editor: Editor, file: Blob) {
 }
 
 /** Repoint splat sources at a freshly written project file (the old File snapshot may become unreadable). */
-export async function rebindSources(editor: Editor, file: Blob) {
+export async function rebindSources(elements: SceneElement[], file: Blob) {
   const { json: written, slice } = await readProject(file);
-  // Elements were written in editor order.
+  // `elements` is the list buildProject wrote, in file order: index i is written.elements[i],
+  // even if the editor's elements changed while saving.
   written.elements.forEach((j, i) => {
-    const el = editor.elements[i];
+    const el = elements[i];
     if ((j.kind === "splat" && el instanceof SplatElement) || (j.kind === "trajectory" && el instanceof TrajectoryElement)) {
       el.source = slice(j.data);
     }
   });
+}
+
+/**
+ * Elements whose embedded source can no longer be read: the file it is a slice of changed on
+ * disk after it was loaded (e.g. a .ply re-exported, or a project overwritten elsewhere).
+ */
+export async function unreadableSources(editor: Editor) {
+  const bad: SceneElement[] = [];
+  for (const el of editor.elements) {
+    if (!(el instanceof SplatElement || el instanceof TrajectoryElement)) continue;
+    try {
+      await el.source.slice(0, 1).arrayBuffer();
+    } catch {
+      bad.push(el);
+    }
+  }
+  return bad;
 }

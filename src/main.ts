@@ -11,7 +11,7 @@ import { toast } from "./ui/toast";
 import { CameraElement } from "./elements";
 import { renderPng } from "./render";
 import { JET_CSS } from "./depth";
-import { PROJECT_EXTENSION, applyProject, buildProject, rebindSources } from "./project";
+import { PROJECT_EXTENSION, applyProject, buildProject, rebindSources, unreadableSources } from "./project";
 import { isAbort, openFile, saveBlob } from "./ui/files";
 import { TRAJECTORY_EXTENSIONS } from "./trajectory";
 
@@ -278,12 +278,26 @@ function setProjectName(name: string) {
 }
 setProjectName("untitled");
 
+/**
+ * A save in progress. Saves must not overlap: a second one would read the embedded splats
+ * from the file while the first replaces it (NotReadableError), and opening another project
+ * meanwhile would mix up which elements the written file belongs to.
+ */
+let saving = false;
+
 async function saveProject(saveAs: boolean) {
+  if (saving) return toast("Already saving…");
   const loading = editor.splats().filter((s) => !s.loaded);
   if (loading.length) return toast("Wait for splats to finish loading before saving");
+  saving = true;
   try {
+    const stale = await unreadableSources(editor);
+    if (stale.length) {
+      const names = stale.map((e) => e.name).join(", ");
+      return toast(`Can't save: the file behind ${names} changed on disk since it was loaded. Delete and re-import ${stale.length > 1 ? "them" : "it"}.`, 10000);
+    }
     const r = minimapEl.getBoundingClientRect();
-    const { blob } = buildProject(editor, {
+    const { blob, elements } = buildProject(editor, {
       view: main.getViewState(),
       overlays: main.overlays,
       minimap: minimapInitialized
@@ -296,17 +310,24 @@ async function saveProject(saveAs: boolean) {
       projectHandle = handle;
       setProjectName(handle.name);
       // Splat sources may be slices of the file we just overwrote: point them at the new one.
-      await rebindSources(editor, await handle.getFile());
+      await rebindSources(elements, await handle.getFile());
     }
     toast(`Saved ${projectName}${PROJECT_EXTENSION} (${formatBytes(blob.size)})`);
   } catch (err) {
     if (isAbort(err)) return toast("Save cancelled");
     console.error(err);
-    toast(`Save failed: ${(err as Error).message}`, 5000);
+    const name = (err as Error).name;
+    const hint =
+      name === "NotAllowedError" ? " (the browser denied write access to the file: try Save as…)" :
+      name === "NotReadableError" ? " (a source file changed on disk while saving: try again)" : "";
+    toast(`Save failed: ${(err as Error).message}${hint}`, 8000);
+  } finally {
+    saving = false;
   }
 }
 
 async function openProject(file: File, handle: FileSystemFileHandle | null) {
+  if (saving) return toast("Wait for the save to finish before opening a project");
   try {
     toast(`Opening ${file.name}…`, 10000);
     const { json, loaded } = await applyProject(editor, file);
