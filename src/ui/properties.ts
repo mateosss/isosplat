@@ -2,6 +2,28 @@ import * as THREE from "three";
 import { Editor } from "../editor";
 import { AXIS_LETTERS, CameraElement, CutBoxElement, CUT_DIRECTIONS, CutPlaneElement, SceneElement, SplatElement } from "../elements";
 import type { View, Viewport } from "../viewport";
+import { toast } from "./toast";
+
+/** A copied transform; also put on the system clipboard as JSON. */
+interface TransformCopy {
+  position: number[];
+  quaternion: number[];
+  scale: number[];
+}
+
+/** Last copied transform, for when the system clipboard can't be read (permissions, file://). */
+let copiedTransform: TransformCopy | null = null;
+
+function parseTransform(text: string): TransformCopy | null {
+  try {
+    const j = JSON.parse(text);
+    const vec = (v: unknown, n: number) => Array.isArray(v) && v.length === n && v.every((x) => typeof x === "number" && Number.isFinite(x));
+    if (vec(j?.position, 3) && vec(j?.quaternion, 4) && vec(j?.scale, 3)) return j as TransformCopy;
+  } catch {
+    /* not a transform */
+  }
+  return null;
+}
 import { TrajectoryElement } from "../trajectory";
 
 type Binding = { sync: () => void };
@@ -64,7 +86,15 @@ export class PropertiesPanel {
     const p = el.root.position;
     s.append(this.row("Position", ...(["x", "y", "z"] as const).map((k) =>
       this.number(() => p[k], (v) => (p[k] = v), { tag: k, step: 0.1 }))));
+    const buttons = document.createElement("div");
+    buttons.className = "p-buttons";
+    buttons.append(
+      this.button("Copy", () => this.copyTransform(el)),
+      this.button("Paste", () => this.pasteTransform(el)),
+    );
+    buttons.title = "Copy / paste position, rotation and scale (as JSON, through the clipboard)";
     if (el.kind === "cutplane") {
+      s.append(buttons);
       s.append(this.note("Cut-planes can be moved and resized (S), not rotated; use the cut direction below to orient them."));
       return;
     }
@@ -84,10 +114,39 @@ export class PropertiesPanel {
       s.append(this.row("Scale", ...(["x", "y", "z"] as const).map((k) =>
         this.number(() => el.getScale()[k], (v) => el.setScale(el.getScale().setComponent("xyz".indexOf(k), v)), { tag: k, step: 0.1 }))));
     }
-    const buttons = document.createElement("div");
-    buttons.className = "p-buttons";
     buttons.append(this.button("Reset rotation", () => q.identity()));
     s.append(buttons);
+  }
+
+  private copyTransform(el: SceneElement) {
+    const copy: TransformCopy = {
+      position: el.root.position.toArray(),
+      quaternion: el.root.quaternion.toArray(),
+      scale: el.getScale().toArray(),
+    };
+    copiedTransform = copy;
+    const text = JSON.stringify(copy);
+    navigator.clipboard?.writeText(text).then(
+      () => toast(`Copied the transform of ${el.name}`),
+      () => toast(`Copied the transform of ${el.name} (in this page only: no clipboard access)`),
+    ) ?? toast(`Copied the transform of ${el.name} (in this page only: no clipboard access)`);
+  }
+
+  /** Paste what the element supports: position always, rotation and scale if it has them. */
+  private async pasteTransform(el: SceneElement) {
+    let t: TransformCopy | null = null;
+    try {
+      t = parseTransform(await navigator.clipboard.readText());
+    } catch {
+      /* no clipboard access: use the page's copy */
+    }
+    t ??= copiedTransform;
+    if (!t) return toast("Nothing to paste: copy a transform first");
+    el.root.position.fromArray(t.position);
+    if (el.canRotate) el.root.quaternion.fromArray(t.quaternion).normalize();
+    if (el.canScale) el.setScale(new THREE.Vector3().fromArray(t.scale));
+    const skipped = [!el.canRotate && "rotation", !el.canScale && "scale"].filter(Boolean);
+    toast(`Pasted the transform onto ${el.name}${skipped.length ? ` (${skipped.join(" and ")} not applied)` : ""}`);
   }
 
   private cameraSection(cam: CameraElement) {
