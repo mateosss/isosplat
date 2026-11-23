@@ -99,11 +99,10 @@ export class TrajectoryElement extends SceneElement {
   cameraCount = 20;
   /** Frustum depth (m). */
   frustumSize = 0.15;
-  frustumColor = "#ffcc00";
-  pathColor = "#ffffff";
-  /** Opacity of the frustums and their dots, and of the path (0–1). */
-  frustumOpacity = 1;
-  pathOpacity = 1;
+  frustumColor = "#22c3ee";
+  pathColor = "#bef1ff";
+  frustumOpacity = 0.8;
+  pathOpacity = 0.6;
   showPath = true;
   /** Line width (px of the rendered image). */
   lineWidth = 2;
