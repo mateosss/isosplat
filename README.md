@@ -84,6 +84,12 @@ in their shader.
   numpad keys, F, W fly…: keys act on the view under the mouse) with its options in its ☰ menu,
   including its own overlays toggle (off by default) and "look from camera". Typical use: keep a clean camera
   preview while editing cuts in the main view.
+- **Trajectories** (Import a TUM `.txt`/`.tum` or EuRoC `.csv` file): the camera path and frustums
+  spread along it, with a parent splat (the poses follow its transform), a time trim, and colors,
+  opacity, line width and dot size. **Playback** moves a scene camera along the poses (one is
+  created on first use) and the main view looks through it: the slider and `#` field jump to exact
+  poses; ▶ plays in real time, smoothly interpolated between poses (time-parameterized cubic
+  spline, so sparse keyframes play smoothly). Render PNGs from that camera as from any other.
 - **World** (top of the hierarchy): background color, and an option to render PNGs with a
   transparent background.
 - **Depth view** colors gaussians and point clouds by their depth along the camera's view axis with

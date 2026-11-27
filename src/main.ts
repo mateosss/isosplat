@@ -590,6 +590,8 @@ function tick(time: number) {
   timer.update(time);
   const dt = Math.min(0.1, timer.getDelta());
   if (fly.active) fly.update(dt);
+  // Before the views: a view looking through a trajectory's camera shows this frame's pose.
+  editor.updateTrajectories();
   for (const v of vp.views) {
     if (!v.visible) continue;
     const flying = fly.active && fly.view === v;
@@ -597,7 +599,6 @@ function tick(time: number) {
     v.update();
   }
   editor.updateCuts();
-  editor.updateTrajectories();
   updateDepthLegends();
   for (const [v, g] of gizmos) if (v.visible && v.overlays) g.draw(v.activeCam);
   props.sync();
@@ -607,6 +608,11 @@ function tick(time: number) {
   requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);
+
+// Trajectory playback follows the wall clock: pause it while the tab is hidden (no frames are drawn).
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) for (const t of editor.trajectories()) t.playing = false;
+});
 
 // Handy for debugging from the console (`vp` is the main view).
 Object.assign(window, { editor, vp: main, mini, viewport: vp });

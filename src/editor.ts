@@ -192,10 +192,18 @@ export class Editor {
     return this.elements.filter((e): e is TrajectoryElement => e instanceof TrajectoryElement);
   }
 
-  /** Called every frame: trajectories follow their parent splats. */
+  /** Called every frame: trajectories follow their parent splats and advance their playback. */
   updateTrajectories() {
     const splats = this.splats();
-    for (const t of this.trajectories()) t.syncParent(splats);
+    const cameras = this.cameras();
+    for (const t of this.trajectories()) {
+      t.syncParent(splats);
+      if (t.camera && !cameras.includes(t.camera)) {
+        t.camera = null; // deleted
+        t.playing = false;
+      }
+      t.step();
+    }
   }
 
   /** Called every frame: sync cut poses into the Spark edit and the point-cloud uniforms. */

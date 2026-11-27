@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
-import { SceneElement, SELECT_COLOR, type SplatElement } from "./elements";
+import { type CameraElement, SceneElement, SELECT_COLOR, type SplatElement } from "./elements";
 
 // ---------------------------------------------------------------------------
 // Parsing
@@ -75,6 +75,9 @@ export function setLineResolution(w: number, h: number) {
 // Element
 // ---------------------------------------------------------------------------
 
+/** OpenCV camera (+Z forward, −Y up) to three.js camera (−Z forward, +Y up): 180° about X. */
+const OPENCV_TO_THREE = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
+
 /** Frustum shape (the files have no intrinsics): 4:3 image, 60° horizontal field of view. */
 const FRUSTUM_ASPECT = 4 / 3;
 const FRUSTUM_HFOV = THREE.MathUtils.degToRad(60);
@@ -110,6 +113,14 @@ export class TrajectoryElement extends SceneElement {
   dotRadius = 0.02;
   /** Draw over the splats instead of being hidden by the gaussians in front of it. */
   onTop = false;
+  /** Scene camera moved along the trajectory by the playhead (the properties panel creates one if needed). */
+  camera: CameraElement | null = null;
+  /** Playhead, in seconds from the first pose. */
+  time = 0;
+  /** Playing in real time (see step). */
+  playing = false;
+  /** Wall clock (ms) and playhead when playback started: real time even on slow frames. */
+  private playAnchor = { wall: 0, time: 0 };
 
   /** Holds the parent's transform (see syncParent). */
   private content = new THREE.Group();
@@ -165,6 +176,21 @@ export class TrajectoryElement extends SceneElement {
     this.updateAppearance();
   }
 
+  /**
+   * Show or hide the frustums, dots and selection highlight (not the path), for a view that looks
+   * through this trajectory's camera. Hiding restores exactly what was shown before.
+   */
+  setCameraMarksVisible(visible: boolean) {
+    if (!visible) {
+      this.marksShown = [this.frustums.visible, this.dots.visible, this.proxy.visible];
+      this.frustums.visible = this.dots.visible = this.proxy.visible = false;
+    } else if (this.marksShown) {
+      [this.frustums.visible, this.dots.visible, this.proxy.visible] = this.marksShown;
+      this.marksShown = null;
+    }
+  }
+  private marksShown: [boolean, boolean, boolean] | null = null;
+
   /** Called every frame: follow the parent splat. */
   syncParent(splats: SplatElement[]) {
     if (this.parent && !splats.includes(this.parent)) this.parent = null;
@@ -178,7 +204,7 @@ export class TrajectoryElement extends SceneElement {
   }
 
   /** Indices of the poses inside the trim. */
-  private trimmed(): [number, number] {
+  trimmed(): [number, number] {
     const t = this.poses.t;
     const t0 = t[0];
     let i = 0, j = t.length - 1;
@@ -305,16 +331,130 @@ export class TrajectoryElement extends SceneElement {
   worldBounds() {
     const box = new THREE.Box3();
     const [i0, i1] = this.trimmed();
-    // Same as content.matrixWorld, without waiting for the next syncParent.
+    const m = this.posesToWorld();
+    const v = new THREE.Vector3();
+    for (let i = i0; i <= i1; i++) box.expandByPoint(v.fromArray(this.poses.p, i * 3).applyMatrix4(m));
+    return box;
+  }
+
+  /** Pose space -> world: the trajectory's own transform, then the parent's (= content.matrixWorld, without waiting a frame). */
+  posesToWorld() {
     this.root.updateMatrixWorld();
     const m = this.root.matrixWorld.clone();
     if (this.parent) {
       this.parent.root.updateMatrixWorld();
       m.multiply(this.parent.root.matrixWorld);
     }
-    const v = new THREE.Vector3();
-    for (let i = i0; i <= i1; i++) box.expandByPoint(v.fromArray(this.poses.p, i * 3).applyMatrix4(m));
-    return box;
+    return m;
+  }
+
+  // ------------------------------------------------------------- playhead
+
+  /** Seconds from the first pose of pose i. */
+  timeOf(i: number) {
+    return this.poses.t[i] - this.poses.t[0];
+  }
+
+  /** Index of the last pose at or before the playhead. */
+  get frame() {
+    const t = this.poses.t, target = t[0] + this.time;
+    let lo = 0, hi = t.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (t[mid] <= target + 1e-9) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  }
+
+  /** Jump to pose i (exact, no interpolation) and stop playback. */
+  setFrame(i: number) {
+    const n = this.count;
+    i = THREE.MathUtils.clamp(Math.round(i), 0, n - 1);
+    this.playing = false;
+    this.time = this.timeOf(i);
+    this.applyCamera();
+  }
+
+  /** Start playing from the playhead (from the trim start if it is outside the trim or at its end). */
+  play() {
+    const [i0, i1] = this.trimmed();
+    if (i1 <= i0) return;
+    const t0 = this.timeOf(i0), t1 = this.timeOf(i1);
+    if (this.time < t0 || this.time >= t1 - 1e-6) this.time = t0;
+    this.playAnchor = { wall: performance.now(), time: this.time };
+    this.playing = true;
+  }
+
+  /** Called every frame: follow the wall clock and move the camera; stops at the end of the trim. */
+  step() {
+    if (!this.playing) return;
+    const [, i1] = this.trimmed();
+    this.time = this.playAnchor.time + (performance.now() - this.playAnchor.wall) / 1000;
+    if (this.time >= this.timeOf(i1)) {
+      this.time = this.timeOf(i1);
+      this.playing = false;
+    }
+    this.applyCamera();
+  }
+
+  /**
+   * Pose at the playhead, in pose space (OpenCV camera: +Z forward, −Y up). Between poses it is a
+   * time-parameterized cubic Hermite spline (Catmull-Rom tangents from the neighbouring poses):
+   * smooth through sparse keyframes, and indistinguishable from the poses when they are dense.
+   * Orientations use the same spline on sign-aligned quaternions, renormalized.
+   */
+  poseAt(time = this.time) {
+    const { t, p, q } = this.poses;
+    const n = t.length;
+    const position = new THREE.Vector3(), quaternion = new THREE.Quaternion();
+    const k = Math.min(this.frameAt(time), n - 1);
+    if (k >= n - 1 || t[k + 1] - t[k] < 1e-9) {
+      position.fromArray(p, k * 3);
+      quaternion.fromArray(q, k * 4);
+      return { position, quaternion };
+    }
+    const h = t[k + 1] - t[k];
+    const s = THREE.MathUtils.clamp((t[0] + time - t[k]) / h, 0, 1);
+    const h00 = 2 * s ** 3 - 3 * s ** 2 + 1, h10 = s ** 3 - 2 * s ** 2 + s, h01 = -2 * s ** 3 + 3 * s ** 2, h11 = s ** 3 - s ** 2;
+    const a = Math.max(0, k - 1), d = Math.min(n - 1, k + 2);
+    // Tangent (per second) at a pose, from its neighbours lo and hi.
+    const tangent = (vals: (j: number) => number[], lo: number, hi: number) => {
+      const dt = t[hi] - t[lo] || 1;
+      return vals(hi).map((v, c) => (v - vals(lo)[c]) / dt);
+    };
+    const pos = (j: number) => [p[j * 3], p[j * 3 + 1], p[j * 3 + 2]];
+    const qk = [q[k * 4], q[k * 4 + 1], q[k * 4 + 2], q[k * 4 + 3]];
+    const quat = (j: number) => {
+      const v = [q[j * 4], q[j * 4 + 1], q[j * 4 + 2], q[j * 4 + 3]];
+      return v[0] * qk[0] + v[1] * qk[1] + v[2] * qk[2] + v[3] * qk[3] < 0 ? v.map((x) => -x) : v; // same hemisphere
+    };
+    const hermite = (vals: (j: number) => number[]) => {
+      const m0 = tangent(vals, a, k + 1), m1 = tangent(vals, k, d);
+      const v0 = vals(k), v1 = vals(k + 1);
+      return v0.map((_, c) => h00 * v0[c] + h10 * h * m0[c] + h01 * v1[c] + h11 * h * m1[c]);
+    };
+    position.fromArray(hermite(pos));
+    quaternion.fromArray(hermite(quat)).normalize();
+    return { position, quaternion };
+  }
+
+  private frameAt(time: number) {
+    const saved = this.time;
+    this.time = time;
+    const f = this.frame;
+    this.time = saved;
+    return f;
+  }
+
+  /** Put the driven camera at the playhead pose (three.js camera: −Z forward, +Y up). */
+  applyCamera() {
+    if (!this.camera) return;
+    const { position, quaternion } = this.poseAt();
+    quaternion.multiply(OPENCV_TO_THREE);
+    const world = this.posesToWorld().multiply(new THREE.Matrix4().compose(position, quaternion, new THREE.Vector3(1, 1, 1)));
+    // Ignore the parent's scale: the camera keeps unit scale.
+    world.decompose(this.camera.root.position, this.camera.root.quaternion, new THREE.Vector3());
   }
 
   override dispose() {

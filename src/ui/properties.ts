@@ -374,6 +374,8 @@ export class PropertiesPanel {
     ));
     s.append(this.note(`Seconds from the first pose (0 – ${tr.duration.toFixed(2)} s).`));
 
+    this.playbackSection(tr);
+
     const c = this.section("Cameras & path");
     c.append(this.row("Cameras",
       this.number(() => tr.cameraCount, (v) => changed(() => (tr.cameraCount = Math.max(0, Math.round(v))))(), { step: 1 })));
@@ -403,6 +405,101 @@ export class PropertiesPanel {
     buttons.className = "p-buttons";
     buttons.append(this.button("Frame in view", () => this.view.frame(tr)));
     c.append(buttons);
+  }
+
+  /**
+   * Move a scene camera along the trajectory: the slider and frame field jump to exact poses,
+   * play runs in real time with smooth interpolation. The main view looks through that camera.
+   */
+  private playbackSection(tr: TrajectoryElement) {
+    const s = this.section("Playback");
+
+    // The camera to drive; the options follow the scene's cameras.
+    const camSel = document.createElement("select");
+    const fillCameras = () => {
+      const cams = this.editor.cameras();
+      const key = cams.map((c) => `${c.id}:${c.name}`).join("|");
+      if (camSel.dataset.key === key) return;
+      camSel.dataset.key = key;
+      camSel.replaceChildren(new Option("New camera (created on first use)", ""), ...cams.map((c) => new Option(c.name, String(c.id))));
+      camSel.value = tr.camera ? String(tr.camera.id) : "";
+    };
+    fillCameras();
+    camSel.addEventListener("change", () => {
+      tr.camera = this.editor.cameras().find((c) => String(c.id) === camSel.value) ?? null;
+      if (!tr.camera) tr.playing = false;
+      else {
+        tr.applyCamera();
+        this.view.lookFrom(tr.camera);
+      }
+    });
+    s.append(this.row("Camera", camSel));
+
+    /** The camera to move (created if needed), with the main view looking through it. */
+    const ensureCamera = () => {
+      if (!tr.camera) {
+        const cam = this.editor.addCamera();
+        cam.name = this.editor.uniqueName(`${tr.name} camera`);
+        tr.camera = cam;
+        this.editor.emit("elements");
+      }
+      if (this.view.lockedCamera !== tr.camera) this.view.lookFrom(tr.camera);
+    };
+
+    const play = this.button("▶", () => {
+      if (tr.playing) tr.playing = false;
+      else {
+        ensureCamera();
+        tr.play();
+      }
+    });
+    play.className = "play";
+    play.title = "Play / pause in real time, smoothly interpolated between poses";
+    const range = document.createElement("input");
+    range.type = "range";
+    range.step = "1";
+    const setBounds = () => {
+      const [i0, i1] = tr.trimmed();
+      range.min = String(i0);
+      range.max = String(Math.max(i0, i1));
+    };
+    setBounds();
+    range.value = String(tr.frame);
+    range.title = "Pose (exact, within the trim)";
+    range.addEventListener("input", () => {
+      ensureCamera();
+      tr.setFrame(Number(range.value));
+    });
+    const frameField = this.number(() => tr.frame, (v) => {
+      ensureCamera();
+      tr.setFrame(v);
+    }, { tag: "#", step: 1 });
+    frameField.classList.add("frame-field");
+    s.append(this.row("Pose", play, range, frameField));
+
+    const info = document.createElement("span");
+    info.className = "value";
+    s.append(this.row("Time", info));
+    s.append(this.note(
+      "The slider and the # field jump to exact poses (within the trim); ▶ plays from there in real time, " +
+      "smoothly interpolated between poses, and stops at the end of the trim. The camera follows the poses " +
+      "(and the parent splat's transform) and the main view looks through it; render PNGs from it as from any camera.",
+    ));
+
+    this.bindings.push({
+      sync: () => {
+        fillCameras();
+        const cam = tr.camera ? String(tr.camera.id) : "";
+        if (document.activeElement !== camSel && camSel.value !== cam) camSel.value = cam;
+        setBounds();
+        const f = String(tr.frame);
+        if (document.activeElement !== range && range.value !== f) range.value = f;
+        const icon = tr.playing ? "⏸" : "▶";
+        if (play.textContent !== icon) play.textContent = icon;
+        const t = `${tr.time.toFixed(2)} s of ${tr.duration.toFixed(2)} s · pose ${tr.frame} of ${tr.count - 1}`;
+        if (info.textContent !== t) info.textContent = t;
+      },
+    });
   }
 
   // ----------------------------------------------------------- widgets

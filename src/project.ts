@@ -79,6 +79,10 @@ type TrajectoryJson = ElementJsonBase & {
   onTop?: boolean;
   frustumOpacity?: number;
   pathOpacity?: number;
+  /** Index of the camera moved by the playhead in `elements`, or null. */
+  camera?: number | null;
+  /** Playhead (seconds from the first pose). */
+  time?: number;
 };
 type ElementJson = CameraJson | SplatJson | CutJson | CutBoxJson | TrajectoryJson;
 
@@ -139,9 +143,11 @@ export function buildProject(
       offset += e.source.size;
       const { visible, start, end, cameraCount, frustumSize, frustumColor, pathColor, showPath, lineWidth, dotRadius, onTop, frustumOpacity, pathOpacity } = e;
       const parent = e.parent ? editor.elements.indexOf(e.parent) : -1;
+      const camera = e.camera ? editor.elements.indexOf(e.camera) : -1;
       return {
         kind: "trajectory", ...base(e), fileName: e.fileName, data, parent: parent >= 0 ? parent : null,
         visible, start, end, cameraCount, frustumSize, frustumColor, pathColor, showPath, lineWidth, dotRadius, onTop, frustumOpacity, pathOpacity,
+        camera: camera >= 0 ? camera : null, time: e.time,
       };
     }
     const c = e as CutPlaneElement;
@@ -200,8 +206,8 @@ export async function applyProject(editor: Editor, file: Blob) {
 
   const created: (SceneElement | null)[] = [];
   const loads: Promise<unknown>[] = [];
-  /** Trajectories and the index of their parent splat, resolved once everything has loaded. */
-  const parents: [TrajectoryElement, number | null][] = [];
+  /** Trajectories and the indices of their parent splat and driven camera, resolved once everything has loaded. */
+  const parents: [TrajectoryElement, number | null, number | null][] = [];
   for (const j of json.elements) {
     if (j.kind === "camera") {
       const cam = editor.addCamera();
@@ -250,7 +256,8 @@ export async function applyProject(editor: Editor, file: Blob) {
             onTop: j.onTop ?? false, frustumOpacity: j.frustumOpacity ?? 1, pathOpacity: j.pathOpacity ?? 1 });
           el.setVisible(j.visible);
           created[index] = el;
-          parents.push([el, j.parent]);
+          el.time = j.time ?? 0;
+          parents.push([el, j.parent, j.camera ?? null]);
         }),
       );
     }
@@ -261,9 +268,11 @@ export async function applyProject(editor: Editor, file: Blob) {
     const order = created.filter((e): e is SceneElement => !!e && editor.elements.includes(e));
     const rest = editor.elements.filter((e) => !order.includes(e));
     editor.elements.splice(0, editor.elements.length, ...order, ...rest);
-    for (const [el, p] of parents) {
+    for (const [el, p, c] of parents) {
       const parent = p === null ? null : created[p];
       el.parent = parent instanceof SplatElement ? parent : null;
+      const camera = c === null ? null : created[c];
+      el.camera = camera instanceof CameraElement ? camera : null;
       el.rebuild();
     }
     if (json.selected !== null && created[json.selected]) editor.select(created[json.selected]);

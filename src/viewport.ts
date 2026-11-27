@@ -442,6 +442,9 @@ export class View {
     // A camera seen from itself would cover the whole view with its own frustum lines.
     const hidden = this.lockedCamera;
     hidden?.setGizmoVisible(false);
+    // Likewise a trajectory seen from the camera it drives: its frustums and dots sit on the lens.
+    const riding = hidden ? this.editor.trajectories().filter((t) => t.camera === hidden) : [];
+    riding.forEach((t) => t.setCameraMarksVisible(false));
     if (this.spark) SparkRenderer.sparkOverride = this.spark;
     setLineResolution(this.rect.w, this.rect.h); // fat-line widths are in pixels of this view
     try {
@@ -449,6 +452,7 @@ export class View {
     } finally {
       SparkRenderer.sparkOverride = undefined;
       hidden?.setGizmoVisible(true);
+      riding.forEach((t) => t.setCameraMarksVisible(true));
     }
   }
 
