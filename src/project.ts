@@ -101,6 +101,8 @@ export interface ProjectJson {
   overlays: boolean;
   view: ViewState;
   minimap?: MinimapJson;
+  /** WASD fly speed (m/s); absent in older projects. */
+  flySpeed?: number;
   selected: number | null;
   elements: ElementJson[];
 }
@@ -108,7 +110,7 @@ export interface ProjectJson {
 /** Build the project file. Splat data is referenced, not copied, so this is cheap even for huge scenes. */
 export function buildProject(
   editor: Editor,
-  views: { view: ViewState; overlays: boolean; minimap?: MinimapJson },
+  views: { view: ViewState; overlays: boolean; minimap?: MinimapJson; flySpeed?: number },
 ): { blob: Blob; json: ProjectJson; elements: SceneElement[] } {
   const parts: Blob[] = [];
   let offset = 0;
@@ -154,6 +156,7 @@ export function buildProject(
     overlays: views.overlays,
     view: views.view,
     minimap: views.minimap,
+    flySpeed: views.flySpeed,
     selected: editor.selected ? editor.elements.indexOf(editor.selected) : null,
     elements,
   };
@@ -188,6 +191,11 @@ export async function readProject(file: Blob) {
  */
 export async function applyProject(editor: Editor, file: Blob) {
   const { json, slice } = await readProject(file);
+  return applyProjectData(editor, json, slice);
+}
+
+/** Like applyProject, from an already parsed project: `slice` returns the bytes of a splat entry. */
+export function applyProjectData(editor: Editor, json: ProjectJson, slice: (d: { offset: number; length: number }) => Blob) {
   editor.clear();
   Object.assign(editor.world, json.world);
 

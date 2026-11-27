@@ -8,10 +8,12 @@ import { AxisGizmo } from "./axisGizmo";
 import { HierarchyPanel } from "./ui/hierarchy";
 import { PropertiesPanel } from "./ui/properties";
 import { toast } from "./ui/toast";
-import { CameraElement } from "./elements";
+import { CameraElement, CutPlaneElement } from "./elements";
+import { CutPlaneDrag } from "./cutDrag";
 import { renderPng } from "./render";
 import { JET_CSS } from "./depth";
-import { PROJECT_EXTENSION, applyProject, buildProject, rebindSources, unreadableSources } from "./project";
+import { PROJECT_EXTENSION, applyProject, applyProjectData, buildProject, rebindSources, type ProjectJson, unreadableSources } from "./project";
+import { loadScene, scenes } from "./supplementary";
 import { isAbort, openFile, saveBlob } from "./ui/files";
 import { TRAJECTORY_EXTENSIONS } from "./trajectory";
 
@@ -40,8 +42,9 @@ const legends = new Map<View, HTMLElement>([
   [mini, $("mm-legend")],
 ]);
 legends.forEach((l) => ((l.querySelector(".bar") as HTMLElement).style.background = JET_CSS));
-new HierarchyPanel($("hierarchy-list"), editor);
-const props = new PropertiesPanel($("properties-body"), editor, vp, main);
+// The supplementary viewer has no sidebar: scenes are only looked at, not edited.
+if (!__SUPPLEMENTARY__) new HierarchyPanel($("hierarchy-list"), editor);
+const props = __SUPPLEMENTARY__ ? null : new PropertiesPanel($("properties-body"), editor, vp, main);
 vp.setBackground(editor.world.background);
 
 // ------------------------------------------------------------------ initial scene
@@ -70,7 +73,8 @@ function aimAt(cam: CameraElement, target: THREE.Vector3) {
 
 const btnFullscreen = $("btn-fullscreen");
 const btnFly = $("btn-fly");
-const btnOverlays = $("btn-overlays");
+/** Absent in the supplementary viewer (overlays come from the scene file there). */
+const btnOverlays = document.getElementById("btn-overlays");
 const btnProjection = $("btn-projection");
 const btnMinimap = $("btn-minimap");
 
@@ -91,8 +95,8 @@ fly.onChange = () => btnFly.classList.toggle("active", fly.active && fly.view ==
 function setOverlays(view: View, v: boolean) {
   view.setOverlaysVisible(v);
   if (view === main) {
-    btnOverlays.classList.toggle("active", !v);
-    btnOverlays.textContent = v ? "◧ Overlays" : "◧ Overlays off";
+    btnOverlays?.classList.toggle("active", !v);
+    if (btnOverlays) btnOverlays.textContent = v ? "◧ Overlays" : "◧ Overlays off";
   }
 }
 
@@ -102,10 +106,10 @@ function orbitCenter(view: View) {
 
 btnFullscreen.addEventListener("click", toggleFullscreen);
 btnFly.addEventListener("click", () => toggleFly(main));
-btnOverlays.addEventListener("click", () => setOverlays(main, !main.overlays));
+btnOverlays?.addEventListener("click", () => setOverlays(main, !main.overlays));
 btnProjection.addEventListener("click", () => main.toggleProjection());
 $("btn-iso").addEventListener("click", () => main.isoView());
-$("btn-frame").addEventListener("click", () => main.frame(editor.selected));
+if (!__SUPPLEMENTARY__) $("btn-frame").addEventListener("click", () => main.frame(editor.selected));
 $("btn-orbit-center").addEventListener("click", () => orbitCenter(main));
 
 // ------------------------------------------------------------------ minimap
@@ -126,10 +130,12 @@ function setMinimap(visible: boolean) {
 }
 btnMinimap.addEventListener("click", () => setMinimap(!mini.visible));
 $("mm-close").addEventListener("click", () => setMinimap(false));
-props.onPreview = (cam) => {
-  setMinimap(true);
-  mini.lookFrom(cam);
-};
+if (props) {
+  props.onPreview = (cam) => {
+    setMinimap(true);
+    mini.lookFrom(cam);
+  };
+}
 
 const mmMenu = $("mm-menu");
 const mmMenuBtn = $("mm-menu-btn");
@@ -139,7 +145,7 @@ function openMinimapMenu(open: boolean) {
   if (!open) return;
   // Reflect current state and list the cameras.
   const act = (a: string) => mmMenu.querySelector(`[data-act="${a}"]`) as HTMLElement;
-  act("overlays").classList.toggle("active", mini.overlays);
+  act("overlays")?.classList.toggle("active", mini.overlays); // not in the supplementary viewer
   act("depth").classList.toggle("active", editor.world.depthView);
   act("fly").classList.toggle("active", fly.active && fly.view === mini);
   act("projection").textContent = mini.isOrtho ? "Ortho → Persp" : "Persp → Ortho";
@@ -204,29 +210,33 @@ function setMinimapSize(w: number, h: number) {
 
 // ------------------------------------------------------------------ hierarchy actions
 
-const fileInput = $<HTMLInputElement>("file-input");
-$("btn-import").addEventListener("click", () => fileInput.click());
-fileInput.addEventListener("change", () => {
-  importFiles(Array.from(fileInput.files ?? []));
-  fileInput.value = "";
-});
+if (!__SUPPLEMENTARY__) {
+  const fileInput = $<HTMLInputElement>("file-input");
+  $("btn-import").addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => {
+    importFiles(Array.from(fileInput.files ?? []));
+    fileInput.value = "";
+  });
+}
 
-$("btn-add-camera").addEventListener("click", () => {
-  const cam = editor.addCamera();
-  main.copyViewToCamera(cam);
-  editor.select(cam);
-  toast("Camera added at the current view");
-});
+if (!__SUPPLEMENTARY__) {
+  $("btn-add-camera").addEventListener("click", () => {
+    const cam = editor.addCamera();
+    main.copyViewToCamera(cam);
+    editor.select(cam);
+    toast("Camera added at the current view");
+  });
 
-$("btn-add-cut").addEventListener("click", () => {
-  editor.select(editor.addCutPlane("+Z", main.controls.target.clone()));
-});
+  $("btn-add-cut").addEventListener("click", () => {
+    editor.select(editor.addCutPlane("+Z", main.controls.target.clone()));
+  });
 
-$("btn-add-box").addEventListener("click", () => {
-  editor.select(editor.addCutBox(main.controls.target.clone()));
-});
+  $("btn-add-box").addEventListener("click", () => {
+    editor.select(editor.addCutBox(main.controls.target.clone()));
+  });
 
-$("btn-delete").addEventListener("click", deleteSelected);
+  $("btn-delete").addEventListener("click", deleteSelected);
+}
 
 function deleteSelected() {
   if (editor.selected) editor.remove(editor.selected);
@@ -266,17 +276,18 @@ async function importFiles(files: File[]) {
 
 // ------------------------------------------------------------------ project files & rendering
 
-const PROJECT_TYPE = { description: "IsoSplat project", accept: { "application/octet-stream": [PROJECT_EXTENSION] } };
+const APP_TITLE = __SUPPLEMENTARY__ ? "Interactive viewer" : "IsoSplat";
+const PROJECT_TYPE = { description: `${APP_TITLE} project`, accept: { "application/octet-stream": [PROJECT_EXTENSION] } };
 const PNG_TYPE = { description: "PNG image", accept: { "image/png": [".png"] } };
 let projectHandle: FileSystemFileHandle | null = null;
 let projectName = "untitled";
 
 function setProjectName(name: string) {
-  projectName = name.replace(/\.isosplat$/i, "");
-  $("project-name").textContent = projectName;
-  document.title = `${projectName} — IsoSplat`;
+  projectName = !__SUPPLEMENTARY__ && name.endsWith(PROJECT_EXTENSION) ? name.slice(0, -PROJECT_EXTENSION.length) : name;
+  if (!__SUPPLEMENTARY__) $("project-name").textContent = projectName;
+  document.title = `${projectName} — ${APP_TITLE}`;
 }
-setProjectName("untitled");
+if (!__SUPPLEMENTARY__) setProjectName("untitled");
 
 /**
  * A save in progress. Saves must not overlap: a second one would read the embedded splats
@@ -300,12 +311,18 @@ async function saveProject(saveAs: boolean) {
     const { blob, elements } = buildProject(editor, {
       view: main.getViewState(),
       overlays: main.overlays,
+      flySpeed: fly.speed,
       minimap: minimapInitialized
         ? { visible: mini.visible, width: r.width || mini.width, height: r.height || mini.height, overlays: mini.overlays, view: mini.getViewState() }
         : undefined,
     });
     toast("Saving…", 10000);
-    const handle = await saveBlob(blob, `${projectName}${PROJECT_EXTENSION}`, PROJECT_TYPE, saveAs ? null : projectHandle);
+    // Read everything into memory before choosing or opening the target file. The parts are
+    // slices of the files the splats came from, often the target itself: Chrome empties a file
+    // as soon as it is picked in "Save as", and a source that fails while streaming leaves a
+    // 0-byte file. Failing here leaves every file on disk untouched.
+    const data = new Blob([await blob.arrayBuffer()], { type: blob.type });
+    const handle = await saveBlob(data, `${projectName}${PROJECT_EXTENSION}`, PROJECT_TYPE, saveAs ? null : projectHandle);
     if (handle) {
       projectHandle = handle;
       setProjectName(handle.name);
@@ -319,10 +336,28 @@ async function saveProject(saveAs: boolean) {
     const name = (err as Error).name;
     const hint =
       name === "NotAllowedError" ? " (the browser denied write access to the file: try Save as…)" :
-      name === "NotReadableError" ? " (a source file changed on disk while saving: try again)" : "";
+      name === "NotReadableError" ? " (a source file changed on disk; nothing was written)" : "";
     toast(`Save failed: ${(err as Error).message}${hint}`, 8000);
   } finally {
     saving = false;
+  }
+}
+
+/** Restore the views of a freshly applied project. */
+function showProject(json: ProjectJson) {
+  vp.setBackground(editor.world.background);
+  if (json.flySpeed) fly.speed = json.flySpeed;
+  setOverlays(main, json.overlays);
+  main.setViewState(json.view);
+  if (json.minimap) {
+    minimapInitialized = true;
+    setMinimapSize(json.minimap.width, json.minimap.height);
+    setOverlays(mini, json.minimap.overlays);
+    mini.setVisible(true);
+    mini.setViewState(json.minimap.view);
+    setMinimap(json.minimap.visible);
+  } else {
+    setMinimap(false);
   }
 }
 
@@ -331,19 +366,7 @@ async function openProject(file: File, handle: FileSystemFileHandle | null) {
   try {
     toast(`Opening ${file.name}…`, 10000);
     const { json, loaded } = await applyProject(editor, file);
-    vp.setBackground(editor.world.background);
-    setOverlays(main, json.overlays);
-    main.setViewState(json.view);
-    if (json.minimap) {
-      minimapInitialized = true;
-      setMinimapSize(json.minimap.width, json.minimap.height);
-      setOverlays(mini, json.minimap.overlays);
-      mini.setVisible(true);
-      mini.setViewState(json.minimap.view);
-      setMinimap(json.minimap.visible);
-    } else {
-      setMinimap(false);
-    }
+    showProject(json);
     projectHandle = handle;
     setProjectName(file.name);
     await loaded;
@@ -383,7 +406,7 @@ async function renderAndSave(cam: CameraElement | null, view: View = main) {
     rendering = false;
   }
 }
-props.onRender = (cam) => renderAndSave(cam);
+if (props) props.onRender = (cam) => renderAndSave(cam);
 
 function formatBytes(n: number) {
   if (n > 1e9) return `${(n / 1e9).toFixed(2)} GB`;
@@ -391,10 +414,25 @@ function formatBytes(n: number) {
   return `${(n / 1e3).toFixed(0)} kB`;
 }
 
-$("btn-open").addEventListener("click", promptOpenProject);
-$("btn-save").addEventListener("click", () => saveProject(false));
-$("btn-save-as").addEventListener("click", () => saveProject(true));
-$("btn-render").addEventListener("click", () => renderAndSave(null));
+if (!__SUPPLEMENTARY__) {
+  $("btn-open").addEventListener("click", promptOpenProject);
+  $("btn-save").addEventListener("click", () => saveProject(false));
+  $("btn-save-as").addEventListener("click", () => saveProject(true));
+}
+if (!__SUPPLEMENTARY__) $("btn-render").addEventListener("click", () => renderAndSave(null));
+
+// ------------------------------------------------------------------ point view
+
+/** P: draw every splat as gaussians or as a point cloud (all switch together). */
+function togglePointView() {
+  const splats = editor.splats().filter((s) => s.loaded);
+  if (!splats.length) return;
+  const mode = splats.some((s) => s.renderMode === "splat") ? "points" : "splat";
+  for (const s of splats) s.setRenderMode(mode);
+  editor.emit("props");
+  props?.render(); // the point size field only exists in point mode
+  toast(mode === "points" ? "Point cloud view (P)" : "Gaussian view (P)", 1500);
+}
 
 // ------------------------------------------------------------------ depth view
 
@@ -419,22 +457,104 @@ function updateDepthLegends() {
 }
 
 // Drag & drop
-const dropHint = $("drop-hint");
-window.addEventListener("dragover", (e) => {
-  e.preventDefault();
-  dropHint.classList.remove("hidden");
-});
-window.addEventListener("dragleave", (e) => {
-  if (e.relatedTarget === null) dropHint.classList.add("hidden");
-});
-window.addEventListener("drop", (e) => {
-  e.preventDefault();
-  dropHint.classList.add("hidden");
-  const files = Array.from(e.dataTransfer?.files ?? []);
-  const project = files.find((f) => f.name.toLowerCase().endsWith(PROJECT_EXTENSION));
-  if (project) openProject(project, null);
-  else importFiles(files);
-});
+if (!__SUPPLEMENTARY__) {
+  const dropHint = $("drop-hint");
+  window.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    dropHint.classList.remove("hidden");
+  });
+  window.addEventListener("dragleave", (e) => {
+    if (e.relatedTarget === null) dropHint.classList.add("hidden");
+  });
+  window.addEventListener("drop", (e) => {
+    e.preventDefault();
+    dropHint.classList.add("hidden");
+    const files = Array.from(e.dataTransfer?.files ?? []);
+    const project = files.find((f) => f.name.toLowerCase().endsWith(PROJECT_EXTENSION));
+    if (project) openProject(project, null);
+    else importFiles(files);
+  });
+}
+
+// ------------------------------------------------------------------ bundled scenes (supplementary build)
+
+if (__SUPPLEMENTARY__) {
+  const select = $<HTMLSelectElement>("scene-select");
+  for (const s of scenes) select.append(new Option(s.label, s.id));
+  let loading = false;
+  /** The scene as loaded, to reset the view to. */
+  let current: ProjectJson | null = null;
+
+  const open = async (id: string) => {
+    const entry = scenes.find((s) => s.id === id) ?? scenes[0];
+    if (!entry || loading) return;
+    loading = true;
+    select.disabled = true;
+    select.value = entry.id;
+    history.replaceState(null, "", `#${entry.id}`);
+    toast(`Loading ${entry.label}…`, 60000);
+    try {
+      const { json, slice } = await loadScene(entry);
+      const { loaded } = applyProjectData(editor, json, slice);
+      current = json;
+      showProject(json);
+      setProjectName(entry.label);
+      await loaded;
+      editor.select(null); // nothing is editable: no selection gizmos
+      toast(`Loaded ${entry.label}`);
+      document.documentElement.dataset.loaded = entry.id; // for the thumbnail renderer of the build
+    } catch (err) {
+      console.error(err);
+      toast(`Could not load ${entry.label}: ${(err as Error).message}`, 8000);
+    } finally {
+      loading = false;
+      select.disabled = false;
+    }
+  };
+  select.addEventListener("change", () => open(select.value));
+  window.addEventListener("hashchange", () => open(location.hash.slice(1)));
+  open(location.hash.slice(1));
+
+  const back = () => location.assign("index.html");
+  const resetView = () => current && showProject(current);
+  const help = $("help");
+  const btnHelp = $("btn-help");
+  const toggleHelp = (show = help.classList.contains("hidden")) => {
+    help.classList.toggle("hidden", !show);
+    btnHelp.classList.toggle("active", show);
+  };
+  toggleHelp(true);
+  $("btn-back").addEventListener("click", back);
+  $("btn-reset").addEventListener("click", resetView);
+  btnHelp.addEventListener("click", () => toggleHelp());
+  $("help-close").addEventListener("click", () => toggleHelp(false));
+  window.addEventListener("keydown", (e) => {
+    if (isTyping(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === "Backspace") {
+      e.preventDefault();
+      back();
+    } else if (fly.active) {
+      return;
+    } else if (e.key.toLowerCase() === "r") {
+      resetView();
+    } else if (e.key.toLowerCase() === "h") {
+      toggleHelp();
+    }
+  });
+
+  /** Clean render of the main view as a small WebP data URL (used by the build for the scene thumbnails). */
+  const renderThumbnail = async (maxWidth = 640) => {
+    const { blob, width, height } = await renderPng(main, editor, null);
+    const bmp = await createImageBitmap(blob);
+    const scale = Math.min(1, maxWidth / width);
+    const c = document.createElement("canvas");
+    c.width = Math.round(width * scale);
+    c.height = Math.round(height * scale);
+    c.getContext("2d")!.drawImage(bmp, 0, 0, c.width, c.height);
+    return c.toDataURL("image/webp", 0.85);
+  };
+  Object.assign(window, { renderThumbnail });
+}
 
 // ------------------------------------------------------------------ pointer
 
@@ -450,11 +570,31 @@ function viewOfSurface(target: EventTarget | null) {
   return vp.views.find((v) => v.visible && v.surface === target) ?? null;
 }
 
+/** Dragging cut-planes by their arrows (main view and minimap, overlays on). */
+const cutDrag = new CutPlaneDrag(editor);
+/** Surface whose cursor shows "grab" over a cut-plane arrow. */
+let grabSurface: HTMLElement | null = null;
+
 window.addEventListener("pointermove", (e) => {
   client.set(e.clientX, e.clientY);
   hovered = vp.viewAt(e.clientX, e.clientY);
   if (hovered) lastView = hovered;
   if (transform.active) transform.onPointerMove(transform.view.toLocal(e.clientX, e.clientY), e);
+  if (cutDrag.active) return cutDrag.move(e.clientX, e.clientY);
+  // Hover feedback over cut-plane arrows.
+  const over = hovered && !transform.active && !fly.active && e.buttons === 0 && cutDrag.hit(hovered, e.clientX, e.clientY);
+  const surface = over ? hovered!.surface : null;
+  if (surface !== grabSurface) {
+    if (grabSurface) grabSurface.style.cursor = "";
+    if (surface) surface.style.cursor = "grab";
+    grabSurface = surface;
+  }
+});
+
+window.addEventListener("pointerup", () => {
+  if (!cutDrag.active) return;
+  cutDrag.end();
+  if (grabSurface) grabSurface.style.cursor = "grab";
 });
 
 // Capture phase so we can swallow clicks that confirm / cancel a transform before OrbitControls sees them.
@@ -479,6 +619,16 @@ container.addEventListener(
     }
     if (!mmMenu.classList.contains("hidden") && !mmMenu.contains(e.target as Node)) openMinimapMenu(false);
     const view = viewOfSurface(e.target);
+    // Pressing on a cut-plane arrow drags the plane along its normal (instead of orbiting).
+    const grabbed = e.button === 0 && !fly.active && view ? cutDrag.hit(view, e.clientX, e.clientY) : null;
+    if (view && grabbed && cutDrag.begin(view, grabbed, e.clientX, e.clientY)) {
+      e.stopPropagation();
+      e.preventDefault();
+      editor.select(grabbed);
+      if (grabSurface) grabSurface.style.cursor = "grabbing";
+      down = null;
+      return;
+    }
     down = e.button === 0 && !fly.active && view ? { view, at: new THREE.Vector2(e.clientX, e.clientY) } : null;
   },
   { capture: true },
@@ -490,7 +640,9 @@ container.addEventListener("pointerup", (e) => {
   down = null;
   if (at.distanceTo(new THREE.Vector2(e.clientX, e.clientY)) >= 5 || viewOfSurface(e.target) !== view) return;
   const p = view.toLocal(e.clientX, e.clientY);
-  editor.select(view.pick(p.x, p.y));
+  const picked = view.pick(p.x, p.y);
+  // The supplementary viewer only lets cut-planes be selected (to move them with G).
+  editor.select(!__SUPPLEMENTARY__ || picked instanceof CutPlaneElement ? picked : null);
 });
 
 container.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -506,7 +658,7 @@ window.addEventListener("keydown", (e) => {
   if (fly.onKey(e, true)) return e.preventDefault();
   if (isTyping(e.target)) return;
   if (transform.onKey(e)) return e.preventDefault();
-  if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+  if (!__SUPPLEMENTARY__ && (e.ctrlKey || e.metaKey) && !e.altKey) {
     const k = e.key.toLowerCase();
     if (k === "s") {
       e.preventDefault();
@@ -557,7 +709,10 @@ window.addEventListener("keydown", (e) => {
   if (e.ctrlKey) return;
 
   const key = e.key.toLowerCase();
-  if (key === "g" || key === "r" || key === "s") {
+  const movingCut = key === "g" && editor.selected instanceof CutPlaneElement;
+  if (__SUPPLEMENTARY__ && ((key === "g" && !movingCut) || key === "r" || key === "s" || e.key === "Delete")) {
+    return; // view only, except moving cut-planes (R is "reset view" there)
+  } else if (key === "g" || key === "r" || key === "s") {
     if (!editor.selected) return toast("Select something first");
     if (!hovered) return;
     e.preventDefault();
@@ -568,12 +723,15 @@ window.addEventListener("keydown", (e) => {
     fly.enter(hovered);
   } else if (key === "z") {
     setDepthView(!editor.world.depthView);
+  } else if (key === "p") {
+    togglePointView();
   } else if (e.key === "Delete") {
     deleteSelected();
   } else if (key === "f") {
     if (!hovered) return;
     if (!hovered.centerOrbitAtCursor(mouse.x, mouse.y)) toast("No surface under the cursor: centered on the current focus depth");
   } else if (e.key === "Escape") {
+    if (cutDrag.active) cutDrag.cancel();
     openMinimapMenu(false);
   }
 });
@@ -600,7 +758,7 @@ function tick(time: number) {
   editor.updateTrajectories();
   updateDepthLegends();
   for (const [v, g] of gizmos) if (v.visible && v.overlays) g.draw(v.activeCam);
-  props.sync();
+  props?.sync();
   const projLabel = main.isOrtho ? "Ortho" : "Persp";
   if (btnProjection.textContent !== projLabel) btnProjection.textContent = projLabel;
   vp.render();
@@ -609,4 +767,4 @@ function tick(time: number) {
 requestAnimationFrame(tick);
 
 // Handy for debugging from the console (`vp` is the main view).
-Object.assign(window, { editor, vp: main, mini, viewport: vp });
+Object.assign(window, { editor, vp: main, mini, viewport: vp, fly });

@@ -2,3 +2,8 @@ node_modules
 dist
 *.ply
 *.spz
+splats
+splats.partial
+splats.config.json
+isosplats/
+splats.zip

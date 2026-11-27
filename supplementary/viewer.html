@@ -1,0 +1,113 @@
+<!doctype html>
+<!--
+  Viewer page of the supplementary-material build (scripts/build-supplementary.mjs).
+  Same app as /index.html with __SUPPLEMENTARY__ = true: no sidebar, no editing, scenes bundled.
+  Keep the element ids used by src/main.ts in sync with /index.html.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scene viewer</title>
+    <link rel="icon" href="data:," />
+    <style>
+      #toolbar { right: 120px; align-items: center; }
+      #toolbar .sep { width: 1px; align-self: stretch; background: rgba(255, 255, 255, 0.15); margin: 0 4px; }
+      #scene-select {
+        font: inherit; color: var(--text); background: rgba(40, 40, 40, 0.85);
+        border: 1px solid var(--border); border-radius: 4px; padding: 3px 4px;
+      }
+      #help {
+        position: absolute; left: 8px; bottom: 8px; max-width: 420px;
+        background: rgba(20, 20, 20, 0.82); border: 1px solid var(--border); border-radius: 6px;
+        padding: 8px 12px 10px; line-height: 1.5; font-size: 12px;
+      }
+      #help h3 { margin: 0 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); display: flex; }
+      #help h3 button { margin-left: auto; padding: 0 6px; font-size: 11px; }
+      #help table { border-collapse: collapse; }
+      #help td { padding: 1px 0; vertical-align: top; }
+      #help td:first-child { padding-right: 12px; white-space: nowrap; color: #fff; }
+      #help kbd {
+        font-family: inherit; font-size: 11px; background: #3a3a3a; border: 1px solid #555;
+        border-bottom-width: 2px; border-radius: 3px; padding: 0 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <main id="viewport">
+        <canvas id="canvas"></canvas>
+        <div id="camera-frame" class="camera-frame overlay-ui hidden"></div>
+        <div id="toolbar">
+          <button id="btn-back" title="Back to the scene list (Backspace)">← Scenes</button>
+          <select id="scene-select" title="Switch scene"></select>
+          <span class="sep"></span>
+          <button id="btn-reset" title="Back to the initial view of the scene (R)">⟲ Reset view</button>
+          <button id="btn-iso" title="Orthographic isometric view">Iso</button>
+          <button id="btn-projection" title="Toggle perspective / orthographic (5)">Persp</button>
+          <button id="btn-orbit-center" title="Orbit around the surface at the view center (F: under the cursor)">⊕ Orbit center</button>
+          <button id="btn-depth" title="Depth view: color by distance to the camera, jet colormap (Z)">◐ Depth</button>
+          <button id="btn-fly" title="WASD fly mode (W; Esc or left click to exit)">✈ Fly</button>
+          <span class="sep"></span>
+          <button id="btn-overlays" title="Show / hide grid, axes, cut-plane outlines and arrows, and camera gizmos">◧ Overlays</button>
+          <button id="btn-minimap" title="Show / hide the minimap: a second, independent view">▣ Minimap</button>
+          <button id="btn-fullscreen" title="Fullscreen viewer (Esc to exit)">⛶ Fullscreen</button>
+          <button id="btn-help" title="Show / hide the controls (H)">? Help</button>
+        </div>
+        <canvas id="axis-gizmo" class="axis-gizmo overlay-ui" title="Click an axis to align the view"></canvas>
+        <div id="hud" class="hidden"></div>
+        <div id="depth-legend" class="depth-legend overlay-ui hidden">
+          <span class="lo"></span>
+          <div class="bar"></div>
+          <span class="hi"></span>
+        </div>
+        <div id="view-label" class="overlay-ui hidden"></div>
+        <div id="help">
+          <h3>Controls <button id="help-close" title="Hide (H)">✕</button></h3>
+          <table>
+            <tr><td>Mouse</td><td>left drag orbit · right drag pan · wheel zoom</td></tr>
+            <tr><td><kbd>F</kbd></td><td>orbit around the point under the cursor</td></tr>
+            <tr><td><kbd>1</kbd> <kbd>3</kbd> <kbd>7</kbd></td><td>front / right / top (<kbd>Shift</kbd>: opposite)</td></tr>
+            <tr><td><kbd>2</kbd> <kbd>4</kbd> <kbd>6</kbd> <kbd>8</kbd></td><td>orbit in 15° steps</td></tr>
+            <tr><td><kbd>5</kbd> · <kbd>0</kbd></td><td>persp / ortho · look through the camera</td></tr>
+            <tr><td><kbd>W</kbd></td><td>fly (WASD, mouse look, Q/E, <kbd>Esc</kbd> exits)</td></tr>
+            <tr><td>Drag an arrow</td><td>move a cut-plane (overlays on); click a plane, then <kbd>G</kbd> to move it freely</td></tr>
+            <tr><td><kbd>Z</kbd></td><td>depth view</td></tr>
+            <tr><td><kbd>P</kbd></td><td>gaussians / point cloud</td></tr>
+            <tr><td><kbd>R</kbd> · <kbd>Home</kbd></td><td>reset view · fit the whole scene</td></tr>
+            <tr><td><kbd>Backspace</kbd></td><td>back to the scene list</td></tr>
+            <tr><td><kbd>H</kbd></td><td>hide this help</td></tr>
+          </table>
+        </div>
+        <div id="minimap" class="hidden">
+          <div id="mm-surface"></div>
+          <div id="mm-frame" class="camera-frame overlay-ui hidden"></div>
+          <canvas id="mm-gizmo" class="axis-gizmo small overlay-ui" title="Click an axis to align the view"></canvas>
+          <div id="mm-legend" class="depth-legend overlay-ui hidden">
+            <span class="lo"></span>
+            <div class="bar"></div>
+            <span class="hi"></span>
+          </div>
+          <div class="mm-bar">
+            <button id="mm-menu-btn" title="Minimap view options">☰</button>
+            <span id="mm-label"></span>
+            <button id="mm-close" title="Hide minimap">✕</button>
+          </div>
+          <div id="mm-menu" class="hidden">
+            <button data-act="fly">✈ Fly</button>
+            <button data-act="overlays">◧ Overlays</button>
+            <button data-act="projection">Persp / Ortho</button>
+            <button data-act="iso">Iso</button>
+            <button data-act="orbit-center">⊕ Orbit center</button>
+            <button data-act="depth">◐ Depth</button>
+            <div class="mm-sep">Look from camera</div>
+            <div id="mm-cameras"></div>
+          </div>
+          <div id="mm-resize" title="Drag to resize the minimap"></div>
+        </div>
+      </main>
+    </div>
+    <div id="toast"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

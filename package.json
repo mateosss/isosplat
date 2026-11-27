@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "supplementary": "node scripts/build-supplementary.mjs"
   },
   "dependencies": {
     "@sparkjsdev/spark": "^2.4.0",

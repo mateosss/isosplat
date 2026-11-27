@@ -43,6 +43,8 @@ export class FlyMode {
     if (this.active) return;
     this.view = view;
     view.unlock();
+    // Flying through an orthographic view makes no sense: switch to perspective (same framing).
+    if (view.isOrtho) view.toggleProjection();
     this.active = true;
     view.controls.enabled = false;
     const cam = view.activeCam;

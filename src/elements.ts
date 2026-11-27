@@ -499,6 +499,8 @@ export class CutPlaneElement extends CutElement {
   private wire = new THREE.LineSegments(new THREE.BufferGeometry(), this.wireMat);
   private border = new THREE.LineSegments(new THREE.BufferGeometry(), this.borderMat);
   private arrow: THREE.ArrowHelper;
+  /** Length of the normal arrow (m), set by rebuild. */
+  private arrowLength = 1;
 
   constructor(name: string, direction: CutDirection) {
     super(name);
@@ -571,12 +573,19 @@ export class CutPlaneElement extends CutElement {
 
     const len = THREE.MathUtils.clamp(Math.min(hu, hv) * 0.3, 0.3, 3);
     this.arrow.setLength(len, len * 0.25, len * 0.12);
+    this.arrowLength = len;
     this.visual.quaternion.copy(quat);
     this.updateAppearance();
   }
 
   pickLines() {
     return [this.border, this.arrow.line];
+  }
+
+  /** World-space ends of the normal arrow (from the plane center to the arrow tip). */
+  arrowSegment(): [THREE.Vector3, THREE.Vector3] {
+    const start = this.root.position.clone();
+    return [start, start.clone().addScaledVector(this.dirVector(), this.arrowLength)];
   }
 
   protected updateAppearance() {
